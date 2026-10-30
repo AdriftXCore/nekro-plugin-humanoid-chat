@@ -69,7 +69,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；表情与好感度交由现有插件负责。",
     author="afx",
-    version="3.0.0",
+    version="3.0.1",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息与主动潜水。",
 )
@@ -2378,6 +2378,34 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
         recent_topics = state.get("recent_topics") if isinstance(state.get("recent_topics"), list) else []
 
         lines: List[str] = []
+        lines.extend(
+            """
+======【代码格式铁律（最高优先级）】======
+· 你整段回复必须是一段可直接执行的 Python 3 代码。
+· 禁止 Markdown 代码块、禁止裸文本、禁止 HTML/DSML/XML 标签。
+· 所有要发到群里的文字，必须作为字符串参数传给 send_msg_text(_ck, "...")。
+· 图片/文件用 send_msg_file(_ck, "...")。
+· 只使用系统/插件已提供的函数；不要发明 send_split_reply / reply / send 等不存在的方法。
+· 自然语言只能写在字符串内部；代码行里不能直接写聊天内容。
+· 代码语法必须使用英文标点；中文标点和聊天文本只能出现在字符串里。
+· [SPLIT] 只能写在字符串内部；禁止 <SPLIT>、[TSPLIT]、SPLIT、<dry-run>。
+· 工具返回值（True/False/ID/JSON/路径）只用于判断，不要拼进聊天字符串。
+· 发送前自检：整段是否能被 Python 解析？是否有裸文本行？字符串和括号是否闭合？
+
+正确写法：
+send_msg_text(_ck, "第一句[SPLIT]第二句")
+send_msg_text(_ck, "在的", ref_msg_id="123")
+send_msg_file(_ck, "/app/uploads/x.jpg")
+
+错误写法（会 SyntaxError）：
+第一句[SPLIT]第二句
+<SPLIT>第一句
+用 Markdown 代码块包裹整段回复
+
+最安全模板：只想说一句话时，直接写：
+send_msg_text(_ck, "内容")
+""".strip().splitlines(),
+        )
         lines.append("======【拟人状态】======")
         lines.append(
             f"现在 {now_local.strftime('%H:%M')}（{period}）。心情 {valence}/100，精力 {energy}/100，耐心 {patience}/100。"
@@ -2507,7 +2535,7 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
             )
 
         lines.append("======【执行环境】======")
-        lines.append("你的回复会在 Python 沙盒中执行；只输出可执行代码，不要输出 DSML/XML/`<tool_call>` 等标记。")
+        lines.append("你的回复会在 Python 沙盒中执行；严格遵循上方【代码格式铁律】。")
         lines.append("发送文本用 `send_msg_text(_ck, \"...\")`；不要用 Markdown 代码块包裹整段回复。")
 
         return "\n".join(lines)
