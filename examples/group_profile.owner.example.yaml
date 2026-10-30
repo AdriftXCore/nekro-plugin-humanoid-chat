@@ -1,0 +1,61 @@
+# 群主/管理员群示例（脱敏）
+# 复制到：plugin_data/afx.humanoid_chat/group_profiles/<chat_key>.yaml
+description: "示例 ACGN 交流群，人多、话题杂"
+enabled: true
+role: auto
+
+owner:
+  name: 示例群主
+  qq: "100000001"
+  aliases: [群主别名]
+  note: 本群群主
+  description: "群主，平时在线时间不固定"
+
+admins:
+  - name: 示例管理员
+    qq: "100000002"
+    aliases: [管理员别名]
+    note: 本群管理员
+    description: "负责日常秩序"
+
+members:
+  - name: 示例群友A
+    qq: "100000003"
+    aliases: [A]
+    note: 与KONA直接互动 20 次；群内发言 50 条
+    description: "喜欢动画和游戏"
+  - name: 示例群友B
+    qq: "100000004"
+    aliases: [B]
+    note: 与KONA直接互动 8 次；群内发言 12 条
+    description: "写小说，偶尔问设定"
+
+culture: "群友喜欢动画、游戏、写作；语气可以放松"
+tone: "群主身份，主动但克制，尊重管理员，不滥用权限"
+activity: "可以欢迎新人、提醒群规；少发长文"
+
+rules:
+  - text: 连续刷屏或重复无意义内容
+    action: mute
+    duration: 300
+  - text: 发广告、拉人、诈骗链接
+    action: recall_and_kick
+  - text: 人身攻击或恶意引战
+    action: mute
+    duration: 600
+  - text: 晚上乱艾特人
+    action: remind
+  - text: 严重违规且屡教不改
+    action: observe_kick
+  - text: 发布违法、色情或政治敏感内容
+    action: recall_and_mute
+    duration: 600
+
+admin_policy:
+  enabled: true
+  direct_actions: [mute, recall, kick]
+  observe_actions: []
+  protected: [owner, admins, self]
+  protected_extra: []
+  max_mute_seconds: 600
+  cooldown_seconds: 60

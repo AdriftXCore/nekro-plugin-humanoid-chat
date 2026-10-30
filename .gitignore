@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.bak
+*.bak.*
+*.log
+.env
+.env.*
+!.env.example
+config.local.yaml
+profiles/
+group_profiles/
+logs/
+data/
+.DS_Store

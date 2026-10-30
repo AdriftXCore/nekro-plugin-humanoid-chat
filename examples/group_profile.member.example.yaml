@@ -1,0 +1,54 @@
+# 普通成员群示例（脱敏）
+# 复制到：plugin_data/afx.humanoid_chat/group_profiles/<chat_key>.yaml
+description: "熟人向小群，常聊动画、做饭、写作"
+enabled: true
+role: auto
+
+owner:
+  name: 示例群主
+  qq: "100000001"
+  aliases: [群主别名]
+  note: 本群群主
+  description: ""
+
+admins:
+  - name: 示例管理员
+    qq: "100000002"
+    aliases: [管理员别名]
+    note: 本群管理员
+    description: ""
+
+members:
+  - name: 示例群友A
+    qq: "100000003"
+    aliases: [A]
+    note: 与KONA直接互动 30 次；群内发言 80 条
+    description: "经常找 KONA 互动"
+  - name: 示例群友B
+    qq: "100000004"
+    aliases: [B]
+    note: 与KONA直接互动 12 次；群内发言 20 条
+    description: "喜欢做饭"
+
+culture: "熟人向小群，语气放松"
+tone: "普通成员，熟人语气，少发号施令，不抢管理员的话"
+activity: "被叫到再回应；不主动执法"
+
+rules:
+  - text: 连续刷屏或重复无意义内容
+    action: remind
+  - text: 发广告、拉人、诈骗链接
+    action: remind
+  - text: 对群主或管理员不尊重
+    action: remind
+  - text: 晚上乱艾特人
+    action: remind
+
+admin_policy:
+  enabled: false
+  direct_actions: []
+  observe_actions: []
+  protected: [owner, admins, self]
+  protected_extra: []
+  max_mute_seconds: 600
+  cooldown_seconds: 60
