@@ -83,7 +83,7 @@ at_first_reply_plain: true
 quote_at_first_reply_quote_at: true
 non_at_first_reply_plain: true
 strip_punctuation: true
-punctuation_chars: 。，！？；：、…—～·,.!?;:'"()[]{}<>《》〈〉「」『』（）【】“”‘’-/
+punctuation_chars: 。，！？；：、…—～~·,.!?;:'"()[]{}<>《》〈〉「」『』（）【】“”‘’-/
 strict_send_gate: false
 anti_repeat_window: 20
 anti_repeat_action: vary

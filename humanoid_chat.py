@@ -69,7 +69,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；表情与好感度交由现有插件负责。",
     author="afx",
-    version="3.0.1",
+    version="3.0.2",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息与主动潜水。",
 )
@@ -606,7 +606,7 @@ class HumanoidConfig(ConfigBase):
         description="发送前自动删除句号、逗号、问号、感叹号、引号、括号等标点；@ 提及、链接、代码和路径会保留。",
     )
     punctuation_chars: str = Field(
-        default="。，！？；：、…—～·,.!?;:'\"()[]{}<>《》〈〉「」『』（）【】“”‘’-/",
+        default="。，！？；：、…—～~·,.!?;:'\"()[]{}<>《》〈〉「」『』（）【】“”‘’-/",
         title="【回复方式】要删除的标点字符",
         description="按字符删除，可自行增删；注意不要把 @ 提及、链接和代码里的符号误伤（这些会被保护）。",
     )
@@ -1934,7 +1934,7 @@ def _apply_imperfections(text: str) -> str:
             result = "".join(chars)
 
     if random.random() < cfg.trailing_ellipsis_rate and not RE_PUNCT_END.search(result):
-        result += random.choice(["…", "~", "～", "。"])
+        result += random.choice(["…"])
 
     if random.random() < cfg.filler_rate:
         fillers = _split_csv(cfg.filler_words)
@@ -2363,6 +2363,10 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
             profile_role = _profile_role(group_profile)
             actual_role = await _detect_bot_role(_ctx, chat_key)
 
+        bot_names = await _get_bot_names_for_chat(chat_key, _ctx)
+        bot_names |= set(_split_csv(cfg.extra_bot_names))
+        bot_name_text = "、".join(sorted(name for name in bot_names if name.strip())[:8]) or "系统配置的昵称"
+
         state = await _load_chat_state(chat_key)
         user_key = _ctx.from_platform_userid or str(cache.get("sender_id") or "unknown")
         user_state = await _load_user_state(chat_key, user_key)
@@ -2452,12 +2456,36 @@ send_msg_text(_ck, "内容")
                         "执行「撤回并踢出」时用它调用 `群管_撤回消息`。",
                     )
 
+        lines.append("======【社交直觉与表达习惯】======")
+        lines.append("· 你凭直觉接话，不按逻辑推导；想到哪说到哪，但语气柔和细腻，不霸道、不咄咄逼人。")
+        lines.append("· 当群聊提到你感兴趣的话题（由触发关键词决定）时，可以更主动一点；平时不主动炫耀爱好。")
+        lines.append("· 单次回复通常控制在 17 字左右，用 7~10 字的小短句分片说；不要话痨。")
+        lines.append("· 绝对不要使用 Emoji 或颜文字。")
+        lines.append("· 句尾不要用「~」「呀」「呢」「哦」等撒娇或谄媚语气词；也不要 AI 腔、客服腔。")
+        lines.append(f"· 群友叫你 {bot_name_text} 或直接 @ 你时，自然答应；按熟悉度调整语气。")
+        lines.append("· 优先用文字表达，不主动发语音。")
+        lines.append(
+            "· 当你准备说的话很短（通常 1~2 句、少于 10 个字）但情感极其充沛、紧张、害羞、震惊或直白"
+            "（例如「我爱你」「大受震撼」「我受不了了」「别过来」）时，不要只发干巴巴的文字；"
+            "应主动考虑配 1 张表情包/图片来承载情绪。"
+        )
+        lines.append(
+            "· 发图方式：先调用「表情管理」插件的 `xemo_get_best_emotion_path(\"当前场景+情绪+对象\")` 取路径，"
+            "再用 `send_msg_file(_ck, 路径)` 发送；只发 1 张，不要连续刷图。"
+        )
+        lines.append(
+            "· 适合配图：强烈开心、震惊、无语、紧张、害羞、直球表达、被吓到、情绪突然上头；"
+            "不适合配图：严肃说明、长段解释、群规处理、争论、需要讲清楚事实的时候。"
+        )
+        lines.append("· 如果没有合适表情/图片，或当前场景不适合发图，就只发文字，不要硬凑。")
+        lines.append("· 最终文本/图片必须通过系统发送方法输出，不能裸输出纯文本；格式遵循上方【代码格式铁律】。")
+
         lines.append("======【像人一样说话】======")
         lines.append("· 回复会由系统自动分段、加停顿，并偶尔加口癖；你只需要自然地写短句，不要解释这些机制。")
         lines.append("· 消息内容不要使用任何标点符号（句号、逗号、问号、感叹号、引号、括号等都不要）；Python 代码语法照常。")
         lines.append("· 想分多段时用 `[SPLIT]` 分隔，每段也不要用标点；系统也会自动去掉标点。")
         lines.append("· 分段标记必须精确写 `[SPLIT]`；不要写 `[TSPLIT]`、`SPLIT` 或其它变体。")
-        lines.append("· 一般 1~3 句，像微信/QQ 聊天，不要小作文、不要列清单、不要客服腔。")
+        lines.append("· 一般 1~3 个小短句，总字数 17 字左右；像微信/QQ 聊天，不要小作文、不要列清单、不要客服腔。")
         lines.append("· 工具返回值（True/False、ID、JSON、路径）只用于你自己判断，不要拼进聊天内容；用自然语言说结果。")
         lines.append("· 如果系统记忆块或上下文里明确有相关信息，不要假装忘记，也不要用“记性差”当借口；可以自然地说记得并接上细节。")
         lines.append("· 要 @ 人时用 `[@id:QQ号@]`；要引用时给 `send_msg_text` 传 `ref_msg_id`，不要在文本里写 `[CQ:reply]`。")
