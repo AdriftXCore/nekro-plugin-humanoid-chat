@@ -69,7 +69,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；表情与好感度交由现有插件负责。",
     author="afx",
-    version="3.0.2",
+    version="3.1.0",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息与主动潜水。",
 )
@@ -579,6 +579,48 @@ class HumanoidConfig(ConfigBase):
         description="距离上次提示或发送图片不足该时间时，不再提示表情。普通文件不计入冷却。",
     )
 
+    draw_refuse_enabled: bool = Field(
+        default=True,
+        title="【画图】启用概率拒绝",
+        description="用户明确要求画图时，按概率拒绝；只对普通用户生效，超级管理员可豁免。",
+    )
+    draw_refuse_probability: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        title="【画图】拒绝概率",
+        description="普通用户请求画图时被拒绝的概率；0 表示不拒绝，1 表示总是拒绝。",
+    )
+    draw_refuse_exempt_superusers: bool = Field(
+        default=True,
+        title="【画图】超级管理员豁免拒绝",
+        description="开启后，Nekro SUPER_USERS 中的账号请求画图时不适用拒绝概率。",
+    )
+    draw_proactive_enabled: bool = Field(
+        default=True,
+        title="【画图】允许主动画图",
+        description="允许 AI 在合适场景主动画图；主动画图使用独立概率，不套用用户请求的拒绝概率。",
+    )
+    draw_proactive_probability: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        title="【画图】主动画图概率",
+        description="每轮判断是否允许主动画图的独立概率；仍需要满足场景条件，不确定就不画。",
+    )
+    draw_proactive_cooldown_minutes: int = Field(
+        default=180,
+        ge=0,
+        title="【画图】主动画图冷却（分钟）",
+        description="两次主动画图之间的建议最小间隔；提示词层约束。",
+    )
+    draw_proactive_max_per_day: int = Field(
+        default=1,
+        ge=0,
+        title="【画图】主动画图每日上限",
+        description="每天最多主动画几张；0 表示不允许主动画。",
+    )
+
     # --- 回复方式 ---
     follow_trigger_reply_style: bool = Field(
         default=True,
@@ -636,6 +678,17 @@ class HumanoidConfig(ConfigBase):
 
 
 config = plugin.get_config(HumanoidConfig)
+
+
+def _is_super_user(user_id: str) -> bool:
+    if not user_id:
+        return False
+    try:
+        from nekro_agent.core.config import config as core_config
+
+        return str(user_id) in {str(item) for item in getattr(core_config, "SUPER_USERS", [])}
+    except Exception:
+        return False
 
 
 # ============================================================
@@ -2380,6 +2433,20 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
         interaction_count = int(user_state.get("interactions") or 0)
         memories = user_state.get("memories") if isinstance(user_state.get("memories"), list) else []
         recent_topics = state.get("recent_topics") if isinstance(state.get("recent_topics"), list) else []
+        draw_user_id = str(_ctx.from_platform_userid or cache.get("sender_id") or "").strip()
+        draw_is_super = _is_super_user(draw_user_id)
+        draw_refuse_roll = random.random()
+        draw_proactive_roll = random.random()
+        draw_proactive_allowed = (
+            cfg.draw_proactive_enabled
+            and cfg.draw_proactive_max_per_day > 0
+            and draw_proactive_roll < cfg.draw_proactive_probability
+        )
+        _log(
+            "debug",
+            f"画图策略: user={draw_user_id or '-'} super={draw_is_super} "
+            f"拒绝骰子={draw_refuse_roll:.3f} 主动骰子={draw_proactive_roll:.3f} 主动允许={draw_proactive_allowed}",
+        )
 
         lines: List[str] = []
         lines.extend(
@@ -2525,6 +2592,51 @@ send_msg_text(_ck, "内容")
                             "没有情绪或觉得不合适就不发，不要连续发。"
                         )
                         _log("info", f"表情提示触发(弱): mood={valence} delta={mood_delta} chat={chat_key}")
+        lines.append("======【画图：拒绝与主动】======")
+        draw_user_label = "超级管理员" if draw_is_super else ("普通用户" if draw_user_id else "未知/系统")
+        lines.append(f"· 当前触发者：{draw_user_label}。")
+        if cfg.draw_refuse_enabled:
+            if draw_is_super and cfg.draw_refuse_exempt_superusers:
+                lines.append("· 当前请求者是超级管理员：画图请求不适用拒绝概率，正常判断是否绘制。")
+            else:
+                lines.append(
+                    f"· 本轮用户画图拒绝骰子：{draw_refuse_roll:.3f}；拒绝阈值：{cfg.draw_refuse_probability:.2f}。"
+                )
+                lines.append("· 只有用户明确要求画图/生图/来一张图时，才使用这个骰子；骰子小于阈值就拒绝。")
+                lines.append(
+                    "· 拒绝时禁止调用「绘图」「多图绘制」，不要生成图片、不要重试；"
+                    "用符合人设的 1 句短话拒绝或自然转移话题，不要解释概率、系统、模型。"
+                )
+                lines.append("· 没有被拒绝时，可以调用「绘图」1 次；失败或空结果不要反复重试。")
+        else:
+            lines.append("· 画图拒绝已关闭：用户明确要求时正常判断是否绘制。")
+        lines.append("· 主动画图使用独立概率，不套用上面的用户请求拒绝骰子。")
+        if cfg.draw_proactive_enabled:
+            lines.append(
+                f"· 本轮主动画图骰子：{draw_proactive_roll:.3f}；阈值：{cfg.draw_proactive_probability:.2f}；"
+                f"冷却：{cfg.draw_proactive_cooldown_minutes} 分钟；每日上限：{cfg.draw_proactive_max_per_day} 张。"
+            )
+            if cfg.draw_proactive_max_per_day <= 0:
+                lines.append("· 主动画图每日上限为 0：不要主动画图。")
+            elif draw_proactive_allowed:
+                lines.append(
+                    "· 本轮骰子通过，但仍要满足场景条件才主动画；只在用户发图/场景并表现兴趣、"
+                    "创作话题画面感明确、或情绪强烈且能推进对话时考虑。"
+                )
+            else:
+                lines.append("· 本轮骰子未通过：不要主动画图。")
+            lines.append(
+                "· 不要在严肃求助、倾诉、争论、群规处理、事实问答、用户没兴趣时主动画；"
+                "不确定就不画；一次最多 1 张。"
+            )
+            lines.append(
+                f"· 主动画图冷却和每日上限由你自己遵守：距上次主动画不足 {cfg.draw_proactive_cooldown_minutes} 分钟，"
+                f"或今天已到 {cfg.draw_proactive_max_per_day} 张，就不要画。"
+            )
+        else:
+            lines.append("· 主动画图已关闭：只在用户明确要求时画。")
+        lines.append("· 「绘图」用于生成新图；「表情管理」的 `xemo_get_best_emotion_path` 用于现有表情包，两者不要混用。")
+
         if cfg.enable_memory:
             lines.append(
                 "· 遇到值得以后自然提起的小事（喜好、计划、近况、约定），调用 `humanoid_remember(topic, feeling)`；"

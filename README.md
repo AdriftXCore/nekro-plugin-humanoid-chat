@@ -3,8 +3,8 @@
 一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
 > 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.0.2`  
-> 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）  
+> 当前版本：`3.1.0`
+> 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
 > 主要适配：OneBot V11 / NapCat（QQ）
 
 ---
@@ -43,6 +43,11 @@
 - **表情 / 多模态协作**
   - 不接管表情库，调用「表情管理」插件的 `xemo_get_best_emotion_path`
   - 情绪明显时提示 AI 自行决定是否发 1 张表情
+- **画图概率拒绝 / 主动画图**
+  - 普通用户请求画图时按 `draw_refuse_probability` 概率拒绝，超级管理员默认豁免
+  - 拒绝时不调用「绘图」/「多图绘制」，用符合人设的短句拒绝或转移话题
+  - 主动画图使用独立概率、冷却和每日上限，不套用用户请求的拒绝概率
+  - 提示词层约束，不会修改内置 draw 插件
 - **长期记忆协作**
   - 不重复维护好感度分数；长期好感度由「好感度系统」负责
   - 支持 Nekro 自带记忆系统的被动注入
@@ -439,6 +444,13 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `active_chat_probability` | 每轮主动冒泡概率，建议 0.02–0.08 |
 | `enable_sticker_coordination` | 是否与表情管理协作 |
 | `sticker_emotion_hint` | 情绪明显时是否提示发表情 |
+| `draw_refuse_enabled` | 是否启用画图概率拒绝 |
+| `draw_refuse_probability` | 普通用户请求画图的拒绝概率，默认 0.8 |
+| `draw_refuse_exempt_superusers` | 超级管理员是否豁免画图拒绝 |
+| `draw_proactive_enabled` | 是否允许 AI 主动画图 |
+| `draw_proactive_probability` | 每轮允许主动画图的独立概率，默认 0.1 |
+| `draw_proactive_cooldown_minutes` | 主动画图建议冷却，默认 180 分钟 |
+| `draw_proactive_max_per_day` | 主动画图每日上限，默认 1 张 |
 | `debug_log` | 详细日志；排查时临时开启 |
 
 > `config.yaml` 是当前生产配置参考，可能包含环境相关值；如果后续加入密钥，请改用环境变量或不要提交。

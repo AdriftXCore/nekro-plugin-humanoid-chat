@@ -78,6 +78,13 @@ sticker_emotion_hint: true
 sticker_mood_threshold: 20
 sticker_hint_probability: 0.35
 sticker_cooldown_minutes: 10
+draw_refuse_enabled: true
+draw_refuse_probability: 0.8
+draw_refuse_exempt_superusers: true
+draw_proactive_enabled: true
+draw_proactive_probability: 0.1
+draw_proactive_cooldown_minutes: 180
+draw_proactive_max_per_day: 1
 follow_trigger_reply_style: true
 at_first_reply_plain: true
 quote_at_first_reply_quote_at: true

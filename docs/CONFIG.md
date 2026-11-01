@@ -138,6 +138,18 @@
 | `sticker_hint_probability` | `0.35` | 【表情】情绪提示概率：满足情绪与冷却条件时，每次回复注入表情建议的概率。 |
 | `sticker_cooldown_minutes` | `10` | 【表情】表情冷却（分钟）：距离上次提示或发送图片不足该时间时，不再提示表情。普通文件不计入冷却。 |
 
+### 画图
+
+| 配置键 | 默认值 | 说明 |
+|---|---|---|
+| `draw_refuse_enabled` | `True` | 【画图】启用概率拒绝：用户明确要求画图时，按概率拒绝；只对普通用户生效。 |
+| `draw_refuse_probability` | `0.8` | 【画图】拒绝概率：普通用户请求画图时被拒绝的概率；0 表示不拒绝，1 表示总是拒绝。 |
+| `draw_refuse_exempt_superusers` | `True` | 【画图】超级管理员豁免拒绝：Nekro `SUPER_USERS` 中的账号请求画图时不适用拒绝概率。 |
+| `draw_proactive_enabled` | `True` | 【画图】允许主动画图：允许 AI 在合适场景主动画图；使用独立概率。 |
+| `draw_proactive_probability` | `0.1` | 【画图】主动画图概率：每轮判断是否允许主动画图的独立概率，仍需满足场景条件。 |
+| `draw_proactive_cooldown_minutes` | `180` | 【画图】主动画图冷却（分钟）：两次主动画图之间的建议最小间隔。 |
+| `draw_proactive_max_per_day` | `1` | 【画图】主动画图每日上限：每天最多主动画几张；0 表示不允许主动画。 |
+
 ### 回复方式
 
 | 配置键 | 默认值 | 说明 |
