@@ -161,6 +161,9 @@
 | `human_search_timeout_seconds` | `12` | 【联网】Search/Fetch 单次请求超时（秒）。 |
 | `human_search_need_content` | `False` | 【联网】搜索是否返回网页正文；一般保持关闭，需要全文时用 `human_fetch`。 |
 | `human_fetch_max_chars` | `6000` | 【联网】`human_fetch` 返回正文的最大字符数，超出会截断。 |
+| `bili_comments_enabled` | `True` | 【联网】B站视频自动附带评论：`human_fetch` 遇到 B 站链接时调用公开 API 获取标题、简介和评论。 |
+| `bili_comments_limit` | `10` | 【联网】B站评论条数：默认 10，0 表示只返回视频信息。 |
+| `bili_comments_sort` | `hot` | 【联网】B站评论排序：`hot` 热门，`time` 最新。 |
 
 ### 回复方式
 

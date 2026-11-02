@@ -73,7 +73,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.2.0",
+    version="3.3.0",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -667,6 +667,23 @@ class HumanoidConfig(ConfigBase):
         title="【联网】抓取正文最大字符数",
         description="human_fetch 返回的 Markdown 正文超过该长度时截断。",
     )
+    bili_comments_enabled: bool = Field(
+        default=True,
+        title="【联网】B站视频自动附带评论",
+        description="human_fetch 遇到 B 站视频链接时，直接调用 B 站公开 API 获取标题、简介和热门评论。",
+    )
+    bili_comments_limit: int = Field(
+        default=10,
+        ge=0,
+        le=20,
+        title="【联网】B站评论条数",
+        description="自动附带的评论数量；0 表示只返回视频信息，不取评论。",
+    )
+    bili_comments_sort: str = Field(
+        default="hot",
+        title="【联网】B站评论排序",
+        description="hot=热门，time=最新；其它值按热门处理。",
+    )
 
     # --- 回复方式 ---
     follow_trigger_reply_style: bool = Field(
@@ -832,6 +849,163 @@ def _format_human_fetch_result(url: str, data: Dict[str, Any], max_chars: int) -
     if len(content) > max_chars:
         content = content[:max_chars].rstrip() + "\n\n...(已截断)"
     return f"【网页内容】{title}\n来源：{url}\n\n{content}"
+
+
+class BiliFetchError(RuntimeError):
+    pass
+
+
+_BILI_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36"
+)
+_RE_BILI_BVID = re.compile(r"(BV[0-9A-Za-z]{10})")
+_RE_BILI_AVID = re.compile(r"(?:/video/)?av(\d+)", re.IGNORECASE)
+
+
+def _is_bilibili_url(url: str) -> bool:
+    host = urllib.parse.urlparse(url).netloc.lower()
+    return (
+        host == "b23.tv"
+        or host.endswith(".b23.tv")
+        or host == "bilibili.com"
+        or host.endswith(".bilibili.com")
+        or host.endswith("bili2233.cn")
+    )
+
+
+def _resolve_bili_url(url: str, timeout: int) -> str:
+    if "b23.tv" not in urllib.parse.urlparse(url).netloc.lower():
+        return url
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": _BILI_UA, "Referer": "https://www.bilibili.com/"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.geturl() or url
+    except Exception as exc:
+        raise BiliFetchError(f"短链解析失败: {type(exc).__name__}: {exc}") from exc
+
+
+def _bili_api_json(path: str, params: Dict[str, Any], timeout: int) -> Dict[str, Any]:
+    query = urllib.parse.urlencode(params)
+    request = urllib.request.Request(
+        f"https://api.bilibili.com{path}?{query}",
+        headers={
+            "User-Agent": _BILI_UA,
+            "Referer": "https://www.bilibili.com/",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            body = response.read().decode(charset, errors="replace")
+        parsed = json.loads(body)
+    except Exception as exc:
+        raise BiliFetchError(f"B站 API 请求失败: {type(exc).__name__}: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise BiliFetchError("B站 API 返回了非对象 JSON。")
+    code = parsed.get("code")
+    if code != 0:
+        raise BiliFetchError(f"B站 API 错误 {code}: {parsed.get('message') or 'unknown'}")
+    data = parsed.get("data")
+    if not isinstance(data, dict):
+        raise BiliFetchError("B站 API 没有返回 data。")
+    return data
+
+
+def _extract_bili_identity(url: str, timeout: int) -> Tuple[str, Dict[str, Any]]:
+    resolved = _resolve_bili_url(url, timeout)
+    match = _RE_BILI_BVID.search(resolved) or _RE_BILI_BVID.search(url)
+    if match:
+        return resolved, {"bvid": match.group(1)}
+    match = _RE_BILI_AVID.search(resolved) or _RE_BILI_AVID.search(url)
+    if match:
+        return resolved, {"aid": int(match.group(1))}
+    raise BiliFetchError("无法从链接中识别 BV/av 号。")
+
+
+def _fetch_bili_bundle(
+    url: str,
+    comment_limit: int,
+    comment_sort: str,
+    timeout: int,
+) -> Tuple[str, Dict[str, Any], List[Dict[str, Any]], str]:
+    resolved, identity = _extract_bili_identity(url, timeout)
+    info = _bili_api_json("/x/web-interface/view", identity, timeout)
+    bvid = str(info.get("bvid") or "").strip()
+    aid = info.get("aid")
+    canonical = f"https://www.bilibili.com/video/{bvid}/" if bvid else resolved
+    comments: List[Dict[str, Any]] = []
+    comment_error = ""
+    if comment_limit > 0:
+        if aid:
+            sort = 0 if comment_sort.strip().lower() == "time" else 2
+            try:
+                reply_data = _bili_api_json(
+                    "/x/v2/reply",
+                    {"type": 1, "oid": int(aid), "pn": 1, "ps": comment_limit, "sort": sort},
+                    timeout,
+                )
+                raw_replies = reply_data.get("replies")
+                if isinstance(raw_replies, list):
+                    comments = [item for item in raw_replies if isinstance(item, dict)]
+            except BiliFetchError as exc:
+                comment_error = str(exc)
+        else:
+            comment_error = "视频信息里没有 aid，无法读取评论。"
+    return canonical, info, comments, comment_error
+
+
+def _format_bili_fetch(
+    url: str,
+    info: Dict[str, Any],
+    comments: List[Dict[str, Any]],
+    comment_error: str,
+    comment_limit: int,
+    max_chars: int,
+) -> str:
+    title = _clip_text(info.get("title"), 200) or "B站视频"
+    owner = info.get("owner") if isinstance(info.get("owner"), dict) else {}
+    stat = info.get("stat") if isinstance(info.get("stat"), dict) else {}
+    desc = _clip_text(info.get("desc"), 500)
+    lines = [
+        f"【网页内容】{title}",
+        f"来源：{url}",
+        f"UP主：{_clip_text(owner.get('name'), 80) or '未知'}",
+        (
+            f"播放：{stat.get('view', 0)} / 点赞：{stat.get('like', 0)} / "
+            f"评论：{stat.get('reply', 0)} / 弹幕：{stat.get('danmaku', 0)}"
+        ),
+    ]
+    if desc:
+        lines.append(f"简介：{desc}")
+    if comment_limit > 0:
+        if comments:
+            lines.append("")
+            lines.append("【热门评论】")
+            for index, reply in enumerate(comments[:comment_limit], start=1):
+                member = reply.get("member") if isinstance(reply.get("member"), dict) else {}
+                content = reply.get("content") if isinstance(reply.get("content"), dict) else {}
+                message = _clip_text(content.get("message"), 300)
+                if not message:
+                    continue
+                suffix = f"，回复 {reply.get('rcount')}" if reply.get("rcount") else ""
+                lines.append(
+                    f"{index}. {_clip_text(member.get('uname'), 60) or '匿名'}（赞 {reply.get('like', 0)}{suffix}）：{message}"
+                )
+        elif comment_error:
+            lines.append("")
+            lines.append(f"评论读取失败：{comment_error}")
+        else:
+            lines.append("")
+            lines.append("暂无可见评论。")
+    result = "\n".join(lines)
+    if len(result) > max_chars:
+        result = result[:max_chars].rstrip() + "\n\n...(已截断)"
+    return result
 
 
 # ============================================================
@@ -2611,12 +2785,37 @@ async def human_fetch(_ctx: AgentCtx, url: str, max_chars: int | None = None) ->
     except (TypeError, ValueError):
         limit = config.human_fetch_max_chars
     limit = max(500, min(limit, 20000))
+    timeout = int(config.human_search_timeout_seconds)
+    if _is_bilibili_url(url):
+        comment_limit = (
+            max(0, min(int(config.bili_comments_limit), 20))
+            if config.bili_comments_enabled
+            else 0
+        )
+        try:
+            resolved, info, comments, comment_error = await asyncio.to_thread(
+                _fetch_bili_bundle,
+                url,
+                comment_limit,
+                config.bili_comments_sort,
+                timeout,
+            )
+            return _format_bili_fetch(
+                resolved,
+                info,
+                comments,
+                comment_error,
+                comment_limit,
+                limit,
+            )
+        except BiliFetchError as exc:
+            _log("warning", f"B站抓取失败，回退 DeepSeek Fetch: {exc}")
     try:
         data = await asyncio.to_thread(
             _human_deepseek_post,
             "/v1/tools/fetch",
             {"url": url},
-            int(config.human_search_timeout_seconds),
+            timeout,
         )
     except HumanSearchError as exc:
         return f"网页抓取失败：{exc}"
@@ -2883,6 +3082,13 @@ send_msg_text(_ck, "内容")
             lines.append(
                 "· 摘要不够时再调用 `human_fetch(url)` 看正文；每轮最多 1 次 `human_search`、最多 2 次 `human_fetch`。"
             )
+            if cfg.bili_comments_enabled:
+                lines.append(
+                    "· 遇到 B 站视频链接，`human_fetch` 会自动附带热门评论；用户问评论区时优先调用它，不要回答看不到评论。"
+                )
+                lines.append(
+                    "· 评论只作参考：概括主要观点，不要逐条复读，也不要把评论当事实。"
+                )
             lines.append(
                 "· 搜索失败、无结果或 Key 未配置时，直接说查不到或暂时无法联网，不要凭记忆编造实时信息。"
             )

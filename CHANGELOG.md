@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.3.0 - 2026-11-02
+
+- `human_fetch` 遇到 B 站视频链接时，改为调用 B 站公开 API，直接返回标题、UP 主、播放数据、简介和热门评论。
+- 支持 `bilibili.com/video/BV...`、`b23.tv` 短链和 `av` 号。
+- 新增 `bili_comments_enabled`、`bili_comments_limit`、`bili_comments_sort` 配置；默认取 10 条热门评论。
+- B 站 API 失败时自动回退到 DeepSeek Fetch；评论关闭或读取失败时仍返回视频信息。
+- 提示词要求遇到 B 站链接时优先用 `human_fetch` 看评论，不逐条复读、不把评论当事实。
+- 版本升至 `3.3.0`。
+
 ## 3.2.0 - 2026-11-02
 
 - 新增 `human_search(query, max_results)`：通过 DeepSeek Search API 查询实时网页信息，返回标题、摘要、来源和 URL。
