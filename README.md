@@ -3,7 +3,7 @@
 一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
 > 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.6.0`
+> 当前版本：`3.7.0`
 > 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
 > 主要适配：OneBot V11 / NapCat（QQ）
 
@@ -68,7 +68,11 @@
   - 识别群里的红包卡片，记录标题和是否点名 KONA
   - 不主动提红包；有人让 KONA 收/领/抢红包时，用“QQ没实名”自然推脱
   - 不领取、不假装收到、不报金额
-
+- **QQ空间说说**
+  - 提供 `human_qzone_publish(content, images, ugc_right)`
+  - 通过 NapCat `send_qzone_msg` 发布，支持文字和最多 9 张图片
+  - 默认所有人可见；可主动发，但有冷却和每日上限
+  - 不发聊天记录、他人隐私、联系方式、住址、定位
 - **长期记忆协作**
   - 不重复维护好感度分数；长期好感度由「好感度系统」负责
   - 支持 Nekro 自带记忆系统的被动注入
@@ -497,6 +501,14 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `red_packet_enabled` | 是否识别红包卡片 |
 | `red_packet_refusal_reason` | 拒绝收红包的参考理由 |
 | `red_packet_context_minutes` | 红包上下文有效期，默认 10 分钟 |
+| `qzone_enabled` | 是否启用 QQ 空间发说说 |
+| `qzone_default_ugc_right` | 默认可见范围，1=所有人 |
+| `qzone_max_chars` | 说说正文最大字符数 |
+| `qzone_images_enabled` | 是否允许带图 |
+| `qzone_max_images` | 最多图片数 |
+| `qzone_proactive_enabled` | 是否允许主动发空间 |
+| `qzone_cooldown_minutes` | 发布冷却，默认 360 分钟 |
+| `qzone_max_per_day` | 每日发布上限，默认 1 条 |
 | `debug_log` | 详细日志；排查时临时开启 |
 
 > `config.yaml` 是当前生产配置参考，可能包含环境相关值；如果后续加入密钥，请改用环境变量或不要提交。

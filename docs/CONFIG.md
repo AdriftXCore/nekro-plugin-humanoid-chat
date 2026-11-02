@@ -193,6 +193,19 @@
 | `red_packet_refusal_reason` | `我QQ没实名，收不了红包` | 【红包】AI 推脱时参考的理由，可自然改写。 |
 | `red_packet_context_minutes` | `10` | 【红包】检测到红包后，多久内仍把红包信息注入提示词。 |
 
+### QQ空间
+
+| 配置键 | 默认值 | 说明 |
+|---|---|---|
+| `qzone_enabled` | `True` | 【QQ空间】启用 `human_qzone_publish`，通过 NapCat `send_qzone_msg` 发说说。 |
+| `qzone_default_ugc_right` | `1` | 【QQ空间】默认可见范围：1 所有人，4 好友，16 部分好友，64 仅自己，128 部分好友不可见。 |
+| `qzone_max_chars` | `1000` | 【QQ空间】说说正文最大字符数。 |
+| `qzone_images_enabled` | `True` | 【QQ空间】允许带图。 |
+| `qzone_max_images` | `9` | 【QQ空间】最多图片数。 |
+| `qzone_proactive_enabled` | `True` | 【QQ空间】允许 AI 主动发说说。 |
+| `qzone_cooldown_minutes` | `360` | 【QQ空间】两次发布的最小间隔。 |
+| `qzone_max_per_day` | `1` | 【QQ空间】每日发布上限；0 表示不限制。 |
+
 ### 回复方式
 
 | 配置键 | 默认值 | 说明 |

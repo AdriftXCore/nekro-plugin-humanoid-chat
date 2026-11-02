@@ -113,6 +113,14 @@ bangumi_include_nsfw: false
 red_packet_enabled: true
 red_packet_refusal_reason: 我QQ没实名，收不了红包
 red_packet_context_minutes: 10
+qzone_enabled: true
+qzone_default_ugc_right: 1
+qzone_max_chars: 1000
+qzone_images_enabled: true
+qzone_max_images: 9
+qzone_proactive_enabled: true
+qzone_cooldown_minutes: 360
+qzone_max_per_day: 1
 follow_trigger_reply_style: true
 at_first_reply_plain: true
 quote_at_first_reply_quote_at: true

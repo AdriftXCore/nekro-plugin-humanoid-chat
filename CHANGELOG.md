@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.7.0 - 2026-11-02
+
+- 新增 `human_qzone_publish`：通过 NapCat `send_qzone_msg` 发布 QQ 空间说说，支持文字和最多 9 张图片。
+- 默认所有人可见，可配置 `ugc_right`；图片支持本地路径转 base64、HTTP URL 和 base64。
+- 支持主动发空间，但工具层强制冷却和每日上限，默认 360 分钟、每日 1 条。
+- 提示词要求不发聊天记录、群聊截图、他人隐私、联系方式、住址、定位；失败不假装成功。
+- 新增 `qzone_enabled`、`qzone_default_ugc_right`、`qzone_max_chars`、`qzone_images_enabled`、`qzone_max_images`、`qzone_proactive_enabled`、`qzone_cooldown_minutes`、`qzone_max_per_day` 配置。
+- 版本升至 `3.7.0`。
+
 ## 3.6.0 - 2026-11-02
 
 - 新增红包卡片识别：记录最近红包标题、时间和是否点名 KONA。

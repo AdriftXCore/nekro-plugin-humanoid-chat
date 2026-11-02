@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import random
 import re
@@ -73,7 +74,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.6.0",
+    version="3.7.0",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -792,6 +793,55 @@ class HumanoidConfig(ConfigBase):
         le=120,
         title="【红包】上下文有效期（分钟）",
         description="检测到红包后，多久内仍把红包信息注入提示词。",
+    )
+
+    qzone_enabled: bool = Field(
+        default=True,
+        title="【QQ空间】启用发说说",
+        description="允许 AI 通过 NapCat 的 send_qzone_msg 发布 QQ 空间说说。",
+    )
+    qzone_default_ugc_right: int = Field(
+        default=1,
+        ge=1,
+        le=128,
+        title="【QQ空间】默认可见范围",
+        description="1 所有人，4 好友，16 部分好友，64 仅自己，128 部分好友不可见。",
+    )
+    qzone_max_chars: int = Field(
+        default=1000,
+        ge=1,
+        le=5000,
+        title="【QQ空间】正文最大字符数",
+        description="超过该长度会拒绝发布。",
+    )
+    qzone_images_enabled: bool = Field(
+        default=True,
+        title="【QQ空间】允许带图",
+        description="允许说说附带图片；图片会转换为 base64 或直接使用 HTTP URL。",
+    )
+    qzone_max_images: int = Field(
+        default=9,
+        ge=0,
+        le=9,
+        title="【QQ空间】最多图片数",
+        description="QQ空间说说最多 9 张图；0 表示不允许图片。",
+    )
+    qzone_proactive_enabled: bool = Field(
+        default=True,
+        title="【QQ空间】允许主动发",
+        description="允许 AI 在合适时机主动发说说；仍受冷却和每日上限限制。",
+    )
+    qzone_cooldown_minutes: int = Field(
+        default=360,
+        ge=0,
+        title="【QQ空间】发布冷却（分钟）",
+        description="两次说说之间的最小间隔；0 表示不限制。",
+    )
+    qzone_max_per_day: int = Field(
+        default=1,
+        ge=0,
+        title="【QQ空间】每日发布上限",
+        description="每天最多发几条；0 表示不限制。",
     )
 
     # --- 回复方式 ---
@@ -1825,6 +1875,31 @@ async def _store_set_dict(value: Dict[str, Any], chat_key: str = "", user_key: s
         )
     except Exception as exc:
         _log("warning", f"写入状态失败 {store_key}: {exc}")
+
+
+def _prepare_qzone_images(images: List[str]) -> List[str]:
+    prepared: List[str] = []
+    for raw in images:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        if value.startswith(("http://", "https://", "base64://", "data:", "file://")):
+            prepared.append(value)
+            continue
+        candidates = [Path(value)]
+        name = Path(value).name
+        if name:
+            candidates.append(Path("/app/uploads") / name)
+            candidates.append(Path("/volume1/docker/nekro-agent/uploads") / name)
+        source = next((candidate for candidate in candidates if candidate.exists()), None)
+        if source is None:
+            raise ValueError(f"图片路径不存在: {value}")
+        try:
+            payload = base64.b64encode(source.read_bytes()).decode("ascii")
+        except Exception as exc:
+            raise ValueError(f"读取图片失败: {value}: {exc}") from exc
+        prepared.append(f"base64://{payload}")
+    return prepared
 
 
 def _default_chat_state() -> Dict[str, Any]:
@@ -3680,6 +3755,77 @@ async def human_bangumi_calendar(
     return _format_bangumi_calendar(day, items[:count])
 
 
+@plugin.mount_sandbox_method(
+    SandboxMethodType.AGENT,
+    "human_qzone_publish",
+    "发布 QQ 空间说说，支持文字和图片",
+)
+async def human_qzone_publish(
+    _ctx: AgentCtx,
+    content: str,
+    images: List[str] | None = None,
+    ugc_right: int | None = None,
+) -> str:
+    """发布 QQ 空间说说。
+
+    Args:
+        content (str): 说说正文，用符合人设的自然口吻。
+        images (List[str] | None): 图片路径、HTTP URL 或 base64 列表，最多 9 张。
+        ugc_right (int | None): 可见范围；留空使用配置。1 所有人，4 好友，16 部分好友，64 仅自己，128 部分好友不可见。
+
+    Returns:
+        str: 发布结果；失败时返回明确错误。
+    """
+    if not config.qzone_enabled:
+        return "QQ空间发布已关闭。"
+    content = (content or "").strip()
+    if not content:
+        return "说说正文不能为空。"
+    if len(content) > config.qzone_max_chars:
+        return f"说说正文太长，最多 {config.qzone_max_chars} 字。"
+    right = config.qzone_default_ugc_right if ugc_right is None else int(ugc_right)
+    if right not in {1, 4, 16, 64, 128}:
+        return "ugc_right 不合法，只支持 1/4/16/64/128。"
+    image_list = [str(item) for item in (images or []) if str(item).strip()]
+    if image_list and not config.qzone_images_enabled:
+        return "QQ空间带图功能已关闭。"
+    if len(image_list) > config.qzone_max_images:
+        return f"图片太多，最多 {config.qzone_max_images} 张。"
+    now = _now()
+    state = await _store_get_dict(chat_key="qzone", store_key="qzone_state")
+    today = _today_str()
+    if state.get("date") != today:
+        state["date"] = today
+        state["count"] = 0
+    count = int(state.get("count") or 0)
+    if config.qzone_max_per_day > 0 and count >= config.qzone_max_per_day:
+        return f"今天已经发过 {count} 条说说了，达到每日上限。"
+    last_post = float(state.get("last_post") or 0)
+    if config.qzone_cooldown_minutes > 0 and last_post > 0:
+        remaining = config.qzone_cooldown_minutes * 60 - (now - last_post)
+        if remaining > 0:
+            return f"还没到下次发说说的冷却时间，约剩 {max(1, int(remaining // 60))} 分钟。"
+    try:
+        prepared_images = await asyncio.to_thread(_prepare_qzone_images, image_list)
+    except ValueError as exc:
+        return f"图片处理失败：{exc}"
+    try:
+        bot = await _ctx.get_onebot_v11_bot()
+        payload: Dict[str, Any] = {"content": content, "ugc_right": right}
+        if prepared_images:
+            payload["images"] = prepared_images
+        result = await bot.call_api("send_qzone_msg", **payload)
+    except Exception as exc:
+        _log("warning", f"QQ空间发布失败: {type(exc).__name__}: {exc}")
+        return f"QQ空间发布失败：{type(exc).__name__}: {exc}"
+    state["count"] = count + 1
+    state["last_post"] = now
+    state["date"] = today
+    await _store_set_dict(state, chat_key="qzone", store_key="qzone_state")
+    _log("info", f"QQ空间发布成功: count={state['count']} ugc_right={right} images={len(prepared_images)}")
+    return "已发布 QQ 空间说说。"
+
+
 # ============================================================
 # 8. 提示词注入
 # ============================================================
@@ -4092,6 +4238,28 @@ send_msg_text(_ck, "内容")
                 lines.append(f"· 最近群里有红包：标题「{red_packet.get('title') or '红包'}」；是否点名你：{targeted}。")
                 if red_packet.get("targeted"):
                     lines.append("· 即使点名你，也不要主动提；只有用户要求时才自然说一句“给我的也没用，我QQ没实名”。")
+
+        if cfg.qzone_enabled:
+            lines.append("======【QQ空间】======")
+            lines.append(
+                "· 用户明确说“发QQ空间/发说说/发条动态”时，调用 `human_qzone_publish(content, images, ugc_right)`；"
+                "不要用普通聊天消息冒充已发布。"
+            )
+            if cfg.qzone_proactive_enabled:
+                lines.append(
+                    "· 你可以在合适时机主动发一条自己的生活、兴趣或感想，但不要频繁；"
+                    "工具会按冷却和每日上限拒绝，不要绕过限制。"
+                )
+            else:
+                lines.append("· 不要主动发空间；只有用户明确要求时发布。")
+            lines.append(
+                "· 说说用符合人设的自然口吻，不暴露 AI 身份；不要发聊天记录、群聊截图、他人隐私、联系方式、住址、定位。"
+            )
+            lines.append(
+                f"· 默认可见范围 {cfg.qzone_default_ugc_right}；用户没明确要求时不要改。"
+                "带图前确认图片可以公开，最多 9 张。"
+            )
+            lines.append("· 发布失败就直说失败，不要假装成功；不要把 tid 或内部 ID 发给用户。")
 
         if cfg.enable_memory:
             lines.append(
