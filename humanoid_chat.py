@@ -73,7 +73,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.4.5",
+    version="3.5.0",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -721,6 +721,61 @@ class HumanoidConfig(ConfigBase):
         description="用户引用带链接的消息时，直接允许抓取，不受模糊指代概率影响。",
     )
 
+    bangumi_enabled: bool = Field(
+        default=True,
+        title="【Bangumi】启用动漫资料查询",
+        description="启用 Bangumi 搜索、条目详情、角色和每日放送工具。",
+    )
+    bangumi_access_token: str = Field(
+        default="",
+        title="【Bangumi】Access Token",
+        description="Bangumi API Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。",
+        json_schema_extra=ExtraField(is_secret=True).model_dump(),
+    )
+    bangumi_base_url: str = Field(
+        default="https://api.bgm.tv",
+        title="【Bangumi】API Base URL",
+        description="Bangumi API 地址，默认 https://api.bgm.tv。",
+    )
+    bangumi_user_agent: str = Field(
+        default="humanoid_chat/3.5.0 (Nekro Agent; +https://github.com/nekro-agent/humanoid-chat)",
+        title="【Bangumi】User-Agent",
+        description="Bangumi 要求带可识别 User-Agent；一般不用改。",
+    )
+    bangumi_timeout_seconds: int = Field(
+        default=12,
+        ge=3,
+        le=60,
+        title="【Bangumi】请求超时（秒）",
+        description="Bangumi API 单次请求超时时间。",
+    )
+    bangumi_search_limit: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        title="【Bangumi】搜索结果数",
+        description="默认返回的动漫条目数量。",
+    )
+    bangumi_character_limit: int = Field(
+        default=10,
+        ge=1,
+        le=20,
+        title="【Bangumi】角色结果数",
+        description="查询条目角色时默认返回数量。",
+    )
+    bangumi_calendar_limit: int = Field(
+        default=10,
+        ge=1,
+        le=20,
+        title="【Bangumi】每日放送结果数",
+        description="查询每日放送时每个星期返回的条目数量。",
+    )
+    bangumi_include_nsfw: bool = Field(
+        default=False,
+        title="【Bangumi】包含 NSFW 条目",
+        description="需要有效 Access Token；没有权限时 Bangumi 会忽略该选项。",
+    )
+
     # --- 回复方式 ---
     follow_trigger_reply_style: bool = Field(
         default=True,
@@ -1052,6 +1107,187 @@ def _format_bili_fetch(
     if len(result) > max_chars:
         result = result[:max_chars].rstrip() + "\n\n...(已截断)"
     return result
+
+
+class BangumiError(RuntimeError):
+    pass
+
+
+def _bangumi_request(
+    path: str,
+    *,
+    method: str = "GET",
+    params: Optional[Dict[str, Any]] = None,
+    payload: Optional[Dict[str, Any]] = None,
+    timeout: Optional[int] = None,
+) -> Any:
+    base_url = (config.bangumi_base_url or "https://api.bgm.tv").strip().rstrip("/")
+    query = urllib.parse.urlencode(params or {})
+    url = f"{base_url}{path}" + (f"?{query}" if query else "")
+    headers = {
+        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.5.0").strip(),
+        "Accept": "application/json",
+    }
+    token = (config.bangumi_access_token or "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    data = None
+    if payload is not None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout or int(config.bangumi_timeout_seconds)) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            body = response.read().decode(charset, errors="replace")
+        return json.loads(body)
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:500]
+        raise BangumiError(f"Bangumi HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise BangumiError(f"Bangumi 请求失败: {exc.reason}") from exc
+    except Exception as exc:
+        raise BangumiError(f"Bangumi 请求失败: {type(exc).__name__}: {exc}") from exc
+
+
+def _bangumi_subject_title(subject: Dict[str, Any]) -> str:
+    name_cn = str(subject.get("name_cn") or "").strip()
+    name = str(subject.get("name") or "").strip()
+    if name_cn and name and name_cn != name:
+        return f"{name_cn} / {name}"
+    return name_cn or name or "未知条目"
+
+
+def _bangumi_rating_text(subject: Dict[str, Any]) -> str:
+    rating = subject.get("rating") if isinstance(subject.get("rating"), dict) else {}
+    score = rating.get("score")
+    total = rating.get("total")
+    rank = rating.get("rank")
+    if score is None:
+        return "暂无评分"
+    text = f"{score} 分"
+    if total:
+        text += f"（{total} 人评分"
+        if rank:
+            text += f"，排名 {rank}"
+        text += "）"
+    elif rank:
+        text += f"（排名 {rank}）"
+    return text
+
+
+def _format_bangumi_search(keyword: str, data: Dict[str, Any]) -> str:
+    items = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(items, list) or not items:
+        return f"Bangumi 没有找到 `{keyword}` 的动画条目。"
+    lines = [f"【Bangumi 动漫搜索】{keyword}"]
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        title = _bangumi_subject_title(item)
+        meta = [
+            part
+            for part in (
+                f"ID {item.get('id')}" if item.get("id") else "",
+                str(item.get("platform") or "").strip(),
+                str(item.get("date") or "").strip(),
+                f"{item.get('eps')} 话" if item.get("eps") else "",
+                _bangumi_rating_text(item),
+            )
+            if part
+        ]
+        lines.append(f"{index}. 《{title}》")
+        if meta:
+            lines.append("   " + " ｜ ".join(meta))
+        tags = item.get("tags") if isinstance(item.get("tags"), list) else []
+        tag_text = "、".join(str(tag.get("name") or "").strip() for tag in tags[:6] if isinstance(tag, dict) and tag.get("name"))
+        if tag_text:
+            lines.append(f"   标签：{tag_text}")
+        summary = _clip_text(item.get("summary"), 260)
+        if summary:
+            lines.append(f"   简介：{summary}")
+    return "\n".join(lines)
+
+
+def _format_bangumi_subject(subject: Dict[str, Any]) -> str:
+    title = _bangumi_subject_title(subject)
+    meta = [
+        part
+        for part in (
+            f"ID {subject.get('id')}" if subject.get("id") else "",
+            str(subject.get("platform") or "").strip(),
+            str(subject.get("date") or "").strip(),
+            f"{subject.get('eps')} 话" if subject.get("eps") else "",
+            _bangumi_rating_text(subject),
+        )
+        if part
+    ]
+    lines = [f"【Bangumi 条目】{title}"]
+    if meta:
+        lines.append(" ｜ ".join(meta))
+    tags = subject.get("tags") if isinstance(subject.get("tags"), list) else []
+    tag_text = "、".join(str(tag.get("name") or "").strip() for tag in tags[:12] if isinstance(tag, dict) and tag.get("name"))
+    if tag_text:
+        lines.append(f"标签：{tag_text}")
+    summary = _clip_text(subject.get("summary"), 800)
+    if summary:
+        lines.append(f"简介：{summary}")
+    return "\n".join(lines)
+
+
+def _format_bangumi_characters(subject_id: int, characters: List[Dict[str, Any]]) -> str:
+    if not characters:
+        return f"Bangumi 条目 {subject_id} 没有返回角色信息。"
+    lines = [f"【Bangumi 角色】条目 {subject_id}"]
+    for index, item in enumerate(characters, start=1):
+        if not isinstance(item, dict):
+            continue
+        name = _clip_text(item.get("name"), 80) or "未知角色"
+        relation = _clip_text(item.get("relation"), 40)
+        actors = item.get("actors") if isinstance(item.get("actors"), list) else []
+        actor_text = "、".join(
+            _clip_text(actor.get("name"), 60)
+            for actor in actors
+            if isinstance(actor, dict) and actor.get("name")
+        )
+        line = f"{index}. {name}"
+        if relation:
+            line += f"（{relation}）"
+        if actor_text:
+            line += f"：CV {actor_text}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _bangumi_weekday_number(value: Any) -> int:
+    text = str(value or "").strip().lower()
+    if not text or text in {"today", "今天", "今日"}:
+        return _local_now().isoweekday()
+    mapping = {
+        "mon": 1, "monday": 1, "周一": 1, "星期一": 1, "1": 1,
+        "tue": 2, "tuesday": 2, "周二": 2, "星期二": 2, "2": 2,
+        "wed": 3, "wednesday": 3, "周三": 3, "星期三": 3, "3": 3,
+        "thu": 4, "thursday": 4, "周四": 4, "星期四": 4, "4": 4,
+        "fri": 5, "friday": 5, "周五": 5, "星期五": 5, "5": 5,
+        "sat": 6, "saturday": 6, "周六": 6, "星期六": 6, "6": 6,
+        "sun": 7, "sunday": 7, "周日": 7, "周天": 7, "星期日": 7, "星期天": 7, "7": 7,
+    }
+    return mapping.get(text, _local_now().isoweekday())
+
+
+def _format_bangumi_calendar(weekday: int, items: List[Dict[str, Any]]) -> str:
+    labels = {1: "星期一", 2: "星期二", 3: "星期三", 4: "星期四", 5: "星期五", 6: "星期六", 7: "星期日"}
+    if not items:
+        return f"Bangumi 的{labels.get(weekday, '今天')}没有放送条目。"
+    lines = [f"【Bangumi 每日放送】{labels.get(weekday, '今天')}"]
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        title = _bangumi_subject_title(item)
+        date = str(item.get("air_date") or "").strip()
+        suffix = f"（{date}）" if date else ""
+        lines.append(f"{index}. 《{title}》{suffix}")
+    return "\n".join(lines)
 
 
 def _normalize_quoted_url(value: Any) -> str:
@@ -3186,6 +3422,182 @@ async def human_fetch(_ctx: AgentCtx, url: str, max_chars: int | None = None) ->
     return _format_human_fetch_result(url, data, limit)
 
 
+@plugin.mount_sandbox_method(
+    SandboxMethodType.AGENT,
+    "human_bangumi_search",
+    "搜索 Bangumi 动画条目，返回 ID、标题、评分、简介",
+)
+async def human_bangumi_search(_ctx: AgentCtx, keyword: str, limit: int | None = None) -> str:
+    """搜索 Bangumi 动画条目。
+
+    Args:
+        keyword (str): 动画名称、别名或关键词。
+        limit (int | None): 返回条数，默认使用配置，范围 1-10。
+
+    Returns:
+        str: 动画条目列表；失败时返回明确错误。
+    """
+    if not config.bangumi_enabled:
+        return "Bangumi 查询已关闭。"
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return "human_bangumi_search 需要一个非空关键词。"
+    if len(keyword) > 128:
+        keyword = keyword[:128]
+    try:
+        count = config.bangumi_search_limit if limit is None else int(limit)
+    except (TypeError, ValueError):
+        count = config.bangumi_search_limit
+    count = max(1, min(count, 10))
+    payload = {
+        "keyword": keyword,
+        "sort": "match",
+        "filter": {"type": [2], "nsfw": bool(config.bangumi_include_nsfw)},
+    }
+    try:
+        data = await asyncio.to_thread(
+            _bangumi_request,
+            "/v0/search/subjects",
+            method="POST",
+            params={"limit": count, "offset": 0},
+            payload=payload,
+            timeout=int(config.bangumi_timeout_seconds),
+        )
+    except BangumiError as exc:
+        return f"Bangumi 搜索失败：{exc}"
+    return _format_bangumi_search(keyword, data)
+
+
+@plugin.mount_sandbox_method(
+    SandboxMethodType.AGENT,
+    "human_bangumi_subject",
+    "查询 Bangumi 动画条目详情",
+)
+async def human_bangumi_subject(_ctx: AgentCtx, subject_id: int) -> str:
+    """查询 Bangumi 动画条目详情。
+
+    Args:
+        subject_id (int): Bangumi 条目 ID，可从搜索结果的 ID 获取。
+
+    Returns:
+        str: 条目详情；失败时返回明确错误。
+    """
+    if not config.bangumi_enabled:
+        return "Bangumi 查询已关闭。"
+    try:
+        sid = int(subject_id)
+    except (TypeError, ValueError):
+        return "subject_id 必须是数字。"
+    if sid <= 0:
+        return "subject_id 必须是正整数。"
+    try:
+        data = await asyncio.to_thread(
+            _bangumi_request,
+            f"/v0/subjects/{sid}",
+            timeout=int(config.bangumi_timeout_seconds),
+        )
+    except BangumiError as exc:
+        return f"Bangumi 条目查询失败：{exc}"
+    if not isinstance(data, dict):
+        return f"Bangumi 条目 {sid} 返回了异常数据。"
+    return _format_bangumi_subject(data)
+
+
+@plugin.mount_sandbox_method(
+    SandboxMethodType.AGENT,
+    "human_bangumi_characters",
+    "查询 Bangumi 动画条目的角色和声优",
+)
+async def human_bangumi_characters(
+    _ctx: AgentCtx,
+    subject_id: int,
+    limit: int | None = None,
+) -> str:
+    """查询动画角色和声优。
+
+    Args:
+        subject_id (int): Bangumi 条目 ID。
+        limit (int | None): 返回角色数量，默认使用配置，范围 1-20。
+
+    Returns:
+        str: 角色列表；失败时返回明确错误。
+    """
+    if not config.bangumi_enabled:
+        return "Bangumi 查询已关闭。"
+    try:
+        sid = int(subject_id)
+    except (TypeError, ValueError):
+        return "subject_id 必须是数字。"
+    if sid <= 0:
+        return "subject_id 必须是正整数。"
+    try:
+        count = config.bangumi_character_limit if limit is None else int(limit)
+    except (TypeError, ValueError):
+        count = config.bangumi_character_limit
+    count = max(1, min(count, 20))
+    try:
+        data = await asyncio.to_thread(
+            _bangumi_request,
+            f"/v0/subjects/{sid}/characters",
+            timeout=int(config.bangumi_timeout_seconds),
+        )
+    except BangumiError as exc:
+        return f"Bangumi 角色查询失败：{exc}"
+    if not isinstance(data, list):
+        return f"Bangumi 条目 {sid} 没有返回角色数据。"
+    return _format_bangumi_characters(sid, data[:count])
+
+
+@plugin.mount_sandbox_method(
+    SandboxMethodType.AGENT,
+    "human_bangumi_calendar",
+    "查询 Bangumi 每日放送的新番",
+)
+async def human_bangumi_calendar(
+    _ctx: AgentCtx,
+    weekday: str | None = None,
+    limit: int | None = None,
+) -> str:
+    """查询 Bangumi 每日放送。
+
+    Args:
+        weekday (str | None): today / 周一 / 星期一 / mon / 1-7；留空表示今天。
+        limit (int | None): 返回条数，默认使用配置，范围 1-20。
+
+    Returns:
+        str: 当日放送列表；失败时返回明确错误。
+    """
+    if not config.bangumi_enabled:
+        return "Bangumi 查询已关闭。"
+    day = _bangumi_weekday_number(weekday)
+    try:
+        count = config.bangumi_calendar_limit if limit is None else int(limit)
+    except (TypeError, ValueError):
+        count = config.bangumi_calendar_limit
+    count = max(1, min(count, 20))
+    try:
+        data = await asyncio.to_thread(
+            _bangumi_request,
+            "/calendar",
+            timeout=int(config.bangumi_timeout_seconds),
+        )
+    except BangumiError as exc:
+        return f"Bangumi 每日放送查询失败：{exc}"
+    if not isinstance(data, list):
+        return "Bangumi 每日放送返回了异常数据。"
+    items: List[Dict[str, Any]] = []
+    for group in data:
+        if not isinstance(group, dict):
+            continue
+        weekday_data = group.get("weekday") if isinstance(group.get("weekday"), dict) else {}
+        if int(weekday_data.get("id") or 0) == day:
+            raw_items = group.get("items")
+            if isinstance(raw_items, list):
+                items = [item for item in raw_items if isinstance(item, dict)]
+            break
+    return _format_bangumi_calendar(day, items[:count])
+
+
 # ============================================================
 # 8. 提示词注入
 # ============================================================
@@ -3557,6 +3969,26 @@ send_msg_text(_ck, "内容")
                 lines.append("· human_fetch 仍可用：只在用户明确给出或引用链接时使用，不要调用 human_search。")
             else:
                 lines.append("· human_fetch 也已关闭：不要调用任何联网工具。")
+
+        if cfg.bangumi_enabled:
+            lines.append("======【Bangumi 动漫资料】======")
+            lines.append(
+                "· 涉及动漫/新番/动画作品、播出时间、评分、角色、声优、制作信息时，优先使用 Bangumi 工具。"
+            )
+            lines.append(
+                "· 先用 `human_bangumi_search(keyword)` 找条目；有多个同名作品时先列候选让用户确认，不要随便选。"
+            )
+            lines.append(
+                "· 确定条目 ID 后，用 `human_bangumi_subject(subject_id)` 查详情，"
+                "用 `human_bangumi_characters(subject_id)` 查角色和声优。"
+            )
+            lines.append(
+                "· 用户问今天/周几有什么新番时，用 `human_bangumi_calendar(weekday)` 查每日放送。"
+            )
+            lines.append(
+                "· 不要直接输出 JSON 或 Bangumi ID；用自然语言总结，并说明 Bangumi 信息可能滞后。"
+            )
+            lines.append("· 新闻、实时事件、非动漫资料仍用 human_search；不要把 Bangumi 当新闻源。")
 
         if cfg.enable_memory:
             lines.append(

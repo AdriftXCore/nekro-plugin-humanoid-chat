@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.5.0 - 2026-11-02
+
+- 新增 Bangumi 动漫资料工具：`human_bangumi_search`、`human_bangumi_subject`、`human_bangumi_characters`、`human_bangumi_calendar`。
+- 支持动画条目搜索、详情、评分、标签、角色/声优和每日放送查询。
+- 新增 Bangumi Token、Base URL、User-Agent、超时、结果数、NSFW 等配置；Token 只放线上配置，不提交仓库。
+- 提示词在动漫、新番、评分、角色、声优、放送时间话题下优先使用 Bangumi；新闻/实时事件仍用 `human_search`。
+- 版本升至 `3.5.0`。
+
 ## 3.4.5 - 2026-11-02
 
 - 修复风子群普通文字引用被反复硬拦截、形成“你引用的是...”复读链的问题。

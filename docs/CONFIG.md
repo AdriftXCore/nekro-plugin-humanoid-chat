@@ -171,6 +171,20 @@
 | `link_context_max_age_minutes` | `30` | 【联网】最近链接有效期（分钟）。 |
 | `quoted_link_always_fetch` | `True` | 【联网】明确引用带链接消息时，100% 允许抓取。 |
 
+### Bangumi
+
+| 配置键 | 默认值 | 说明 |
+|---|---|---|
+| `bangumi_enabled` | `True` | 【Bangumi】启用动漫搜索、条目详情、角色和每日放送工具。 |
+| `bangumi_access_token` | 空 | 【Bangumi】Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。 |
+| `bangumi_base_url` | `https://api.bgm.tv` | 【Bangumi】API 地址。 |
+| `bangumi_user_agent` | `humanoid_chat/3.5.0 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
+| `bangumi_timeout_seconds` | `12` | 【Bangumi】单次请求超时（秒）。 |
+| `bangumi_search_limit` | `5` | 【Bangumi】搜索结果数。 |
+| `bangumi_character_limit` | `10` | 【Bangumi】角色结果数。 |
+| `bangumi_calendar_limit` | `10` | 【Bangumi】每日放送结果数。 |
+| `bangumi_include_nsfw` | `False` | 【Bangumi】是否包含 NSFW 条目；需要有效 Token。 |
+
 ### 回复方式
 
 | 配置键 | 默认值 | 说明 |

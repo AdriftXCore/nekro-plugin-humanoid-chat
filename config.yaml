@@ -101,6 +101,15 @@ link_fetch_probability: 0.3
 link_context_limit: 5
 link_context_max_age_minutes: 30
 quoted_link_always_fetch: true
+bangumi_enabled: true
+bangumi_access_token: ''
+bangumi_base_url: https://api.bgm.tv
+bangumi_user_agent: humanoid_chat/3.5.0 (Nekro Agent; +https://github.com/nekro-agent/humanoid-chat)
+bangumi_timeout_seconds: 12
+bangumi_search_limit: 5
+bangumi_character_limit: 10
+bangumi_calendar_limit: 10
+bangumi_include_nsfw: false
 follow_trigger_reply_style: true
 at_first_reply_plain: true
 quote_at_first_reply_quote_at: true

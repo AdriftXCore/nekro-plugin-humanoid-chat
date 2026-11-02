@@ -3,7 +3,7 @@
 一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
 > 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.4.5`
+> 当前版本：`3.5.0`
 > 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
 > 主要适配：OneBot V11 / NapCat（QQ）
 
@@ -59,6 +59,10 @@
   - 引用图片时提取图片路径并交给多模态上下文；图片不在最近视觉窗口时直接回复“没看到”，不再从历史链接猜
   - 引用无链接卡片时直接根据卡片标题回复，不触发 AI；普通文字引用恢复正常聊天，避免风子群复读链
   - `human_fetch` 可独立开关；Key 未配置、限流、余额不足或网络失败时明确报错，不静默编造
+- **Bangumi 动漫资料**
+  - 提供 `human_bangumi_search`、`human_bangumi_subject`、`human_bangumi_characters`、`human_bangumi_calendar`
+  - 查询动画条目、评分、简介、角色/声优和每日放送
+  - Token 可选，默认匿名查询公开条目；Token 只放插件配置，不写入仓库
 - **长期记忆协作**
   - 不重复维护好感度分数；长期好感度由「好感度系统」负责
   - 支持 Nekro 自带记忆系统的被动注入
@@ -478,6 +482,12 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `link_context_limit` | 最近链接候选数量，默认 5 |
 | `link_context_max_age_minutes` | 最近链接有效期，默认 30 分钟 |
 | `quoted_link_always_fetch` | 明确引用链接时是否 100% 允许抓取 |
+| `bangumi_enabled` | 是否启用 Bangumi 动漫查询 |
+| `bangumi_access_token` | Bangumi Access Token，留空匿名查询 |
+| `bangumi_search_limit` | Bangumi 默认搜索结果数 |
+| `bangumi_character_limit` | Bangumi 默认角色结果数 |
+| `bangumi_calendar_limit` | Bangumi 每日放送结果数 |
+| `bangumi_include_nsfw` | 是否包含 NSFW 条目 |
 | `debug_log` | 详细日志；排查时临时开启 |
 
 > `config.yaml` 是当前生产配置参考，可能包含环境相关值；如果后续加入密钥，请改用环境变量或不要提交。
