@@ -85,6 +85,13 @@ draw_proactive_enabled: true
 draw_proactive_probability: 0.1
 draw_proactive_cooldown_minutes: 180
 draw_proactive_max_per_day: 1
+human_search_enabled: true
+human_search_api_key: ''
+human_search_base_url: https://api.deepseek.com
+human_search_max_results: 5
+human_search_timeout_seconds: 12
+human_search_need_content: false
+human_fetch_max_chars: 6000
 follow_trigger_reply_style: true
 at_first_reply_plain: true
 quote_at_first_reply_quote_at: true

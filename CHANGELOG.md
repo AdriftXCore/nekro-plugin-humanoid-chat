@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.0 - 2026-11-02
+
+- 新增 `human_search(query, max_results)`：通过 DeepSeek Search API 查询实时网页信息，返回标题、摘要、来源和 URL。
+- 新增 `human_fetch(url, max_chars)`：通过 DeepSeek Fetch API 抓取网页 Markdown 正文，按配置截断。
+- 新增 DeepSeek Base URL、API Key、结果数、超时、搜索正文开关、抓取最大字符数等配置；Key 未配置时明确报错，不静默编造。
+- 新增【联网查询】提示词：实时信息先搜索、引用 URL、摘要不足再抓取、每轮限制调用次数。
+- 修复消息标点清理误删数字小数、负数、时间、日期和 `km/h` / `m/s` 等单位的问题。
+- 版本升至 `3.2.0`。
+
 ## 3.1.0 - 2026-11-01
 
 - 新增画图概率拒绝：普通用户明确要求画图时，按 `draw_refuse_probability` 概率拒绝；超级管理员通过 `SUPER_USERS` 默认豁免。

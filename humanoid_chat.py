@@ -21,6 +21,9 @@ import random
 import re
 import shutil
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +41,7 @@ from nekro_agent.api.plugin import (
     CommandPermission,
     CommandResponse,
     ConfigBase,
+    ExtraField,
     NekroPlugin,
     SandboxMethodType,
 )
@@ -67,11 +71,11 @@ INSTANCE_ID = random.randint(1000, 9999)
 plugin = NekroPlugin(
     name="拟人交互助手",
     module_name="humanoid_chat",
-    description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；表情与好感度交由现有插件负责。",
+    description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.1.0",
+    version="3.2.0",
     url="https://github.com/nekro-agent/humanoid-chat",
-    sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息与主动潜水。",
+    sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
 
 
@@ -621,6 +625,49 @@ class HumanoidConfig(ConfigBase):
         description="每天最多主动画几张；0 表示不允许主动画。",
     )
 
+    human_search_enabled: bool = Field(
+        default=True,
+        title="【联网】启用 human_search / human_fetch",
+        description="允许 AI 通过 DeepSeek Search/Fetch 查询实时网页信息；Key 未配置时会明确报错。",
+    )
+    human_search_api_key: str = Field(
+        default="",
+        title="【联网】DeepSeek API Key",
+        description="用于 DeepSeek Search/Fetch 的 Bearer Key；留空则联网工具不可用。",
+        json_schema_extra=ExtraField(is_secret=True).model_dump(),
+    )
+    human_search_base_url: str = Field(
+        default="https://api.deepseek.com",
+        title="【联网】DeepSeek Base URL",
+        description="DeepSeek API 地址，默认 https://api.deepseek.com。",
+    )
+    human_search_max_results: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        title="【联网】默认搜索结果数",
+        description="human_search 不传 max_results 时返回的条数，范围 1-10。",
+    )
+    human_search_timeout_seconds: int = Field(
+        default=12,
+        ge=3,
+        le=60,
+        title="【联网】请求超时（秒）",
+        description="Search/Fetch 单次请求超时时间。",
+    )
+    human_search_need_content: bool = Field(
+        default=False,
+        title="【联网】搜索返回网页正文",
+        description="开启后搜索会返回 content，响应更大；一般保持关闭，需要全文时用 human_fetch。",
+    )
+    human_fetch_max_chars: int = Field(
+        default=6000,
+        ge=500,
+        le=20000,
+        title="【联网】抓取正文最大字符数",
+        description="human_fetch 返回的 Markdown 正文超过该长度时截断。",
+    )
+
     # --- 回复方式 ---
     follow_trigger_reply_style: bool = Field(
         default=True,
@@ -689,6 +736,102 @@ def _is_super_user(user_id: str) -> bool:
         return str(user_id) in {str(item) for item in getattr(core_config, "SUPER_USERS", [])}
     except Exception:
         return False
+
+
+class HumanSearchError(RuntimeError):
+    pass
+
+
+def _human_search_base_url() -> str:
+    return (config.human_search_base_url or "https://api.deepseek.com").strip().rstrip("/")
+
+
+def _human_deepseek_post(path: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
+    api_key = (config.human_search_api_key or "").strip()
+    if not api_key:
+        raise HumanSearchError("DeepSeek API Key 未配置，请在 humanoid_chat 配置里填写 human_search_api_key。")
+    url = f"{_human_search_base_url()}{path}"
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=data,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            body = response.read().decode(charset, errors="replace")
+        parsed = json.loads(body)
+        if not isinstance(parsed, dict):
+            raise HumanSearchError("DeepSeek 返回了非对象 JSON。")
+        return parsed
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")[:500]
+        raise HumanSearchError(f"DeepSeek HTTP {exc.code}: {body}") from exc
+    except urllib.error.URLError as exc:
+        raise HumanSearchError(f"DeepSeek 请求失败: {exc.reason}") from exc
+    except HumanSearchError:
+        raise
+    except Exception as exc:
+        raise HumanSearchError(f"DeepSeek 请求失败: {type(exc).__name__}: {exc}") from exc
+
+
+def _clip_text(value: Any, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) > limit:
+        return text[: max(0, limit - 1)].rstrip() + "…"
+    return text
+
+
+def _format_human_search_results(query: str, data: Dict[str, Any]) -> str:
+    results = data.get("results")
+    if not isinstance(results, list) or not results:
+        return f"联网搜索没有找到 `{query}` 的可用结果。"
+    lines = [f"【联网搜索结果】{query}"]
+    used = len(lines[0])
+    for index, item in enumerate(results, start=1):
+        if not isinstance(item, dict):
+            continue
+        title = _clip_text(item.get("title"), 160)
+        url = str(item.get("url") or "").strip()
+        if not title or not url:
+            continue
+        summary = _clip_text(
+            item.get("summary") or item.get("snippet") or item.get("content"),
+            500,
+        )
+        site = _clip_text(item.get("site_name"), 80)
+        date = _clip_text(item.get("date"), 40)
+        block = [f"{index}. {title}"]
+        if summary:
+            block.append(f"   摘要：{summary}")
+        meta = " / ".join(part for part in (site, date) if part)
+        if meta:
+            block.append(f"   来源：{meta}")
+        block.append(f"   URL：{url}")
+        rendered = "\n".join(block)
+        if used + len(rendered) > 6000:
+            break
+        lines.append(rendered)
+        used += len(rendered) + 1
+    if len(lines) == 1:
+        return f"联网搜索没有找到 `{query}` 的可用结果。"
+    return "\n".join(lines)
+
+
+def _format_human_fetch_result(url: str, data: Dict[str, Any], max_chars: int) -> str:
+    title = _clip_text(data.get("title"), 200) or url
+    content = str(data.get("content") or "").strip()
+    if not content:
+        return f"网页抓取没有返回可用正文：{url}"
+    if len(content) > max_chars:
+        content = content[:max_chars].rstrip() + "\n\n...(已截断)"
+    return f"【网页内容】{title}\n来源：{url}\n\n{content}"
 
 
 # ============================================================
@@ -2005,8 +2148,14 @@ _PUNCT_PROTECT_PATTERNS = (
     (re.compile(r"\[@id:[^\]]*@\]"), False),
     (re.compile(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+", re.IGNORECASE), True),
     (re.compile(r"(?<![\w/])/[\w./-]+"), False),
+    (re.compile(r"(?<!\d)\d{4}[-/]\d{1,2}[-/]\d{1,2}(?!\d)"), False),
+    (re.compile(r"(?<!\d)\d{1,2}:\d{2}(?!\d)"), False),
+    (re.compile(r"(?<![A-Za-z])(?:km/h|m/s)(?![A-Za-z])"), False),
+    (re.compile(r"(?:公里/小时|千米/小时)"), False),
+    (re.compile(r"(?<![A-Za-z0-9_])[+-]?\d+(?:\.\d+)?(?![0-9.])"), False),
 )
 _URL_TRAILING_PUNCT = "。，！？；：、…—～·“”‘’（）【】《》〈〉「」『』"
+_PUNCT_PROTECT_BASE = 0xE000
 
 
 def _strip_punctuation(text: str) -> str:
@@ -2023,7 +2172,7 @@ def _strip_punctuation(text: str) -> str:
         if trim_trailing:
             value = value.rstrip(_URL_TRAILING_PUNCT)
         protected.append(value)
-        return f"\x00{len(protected) - 1}\x00"
+        return chr(_PUNCT_PROTECT_BASE + len(protected) - 1)
 
     result = text
     for pattern, trim_trailing in _PUNCT_PROTECT_PATTERNS:
@@ -2036,7 +2185,7 @@ def _strip_punctuation(text: str) -> str:
         result = re.sub(f"[{re.escape(chars)}]", "", result)
 
     for index, value in enumerate(protected):
-        result = result.replace(f"\x00{index}\x00", value)
+        result = result.replace(chr(_PUNCT_PROTECT_BASE + index), value)
 
     result = re.sub(r"[ \t]{2,}", " ", result)
     result = re.sub(r"\n{3,}", "\n\n", result)
@@ -2388,6 +2537,92 @@ async def humanoid_remember(_ctx: AgentCtx, topic: str, feeling: str = "") -> st
     return "ok"
 
 
+@plugin.mount_sandbox_method(
+    SandboxMethodType.AGENT,
+    "human_search",
+    "联网搜索实时信息，返回标题、摘要、来源和 URL",
+)
+async def human_search(_ctx: AgentCtx, query: str, max_results: int | None = None) -> str:
+    """联网搜索关键词、问题、新闻主题或网页主题。
+
+    Args:
+        query (str): 要搜索的内容，例如「武汉天气」「DeepSeek V4 发布」。
+        max_results (int | None): 返回条数，默认使用配置，范围 1-10。
+
+    Returns:
+        str: 带标题、摘要和 URL 的搜索结果；失败时返回明确错误。
+    """
+    if not config.human_search_enabled:
+        return "联网搜索已关闭。"
+    query = (query or "").strip()
+    if not query:
+        return "human_search 需要一个非空查询。"
+    if len(query) > 128:
+        query = query[:128]
+    try:
+        limit = config.human_search_max_results if max_results is None else int(max_results)
+    except (TypeError, ValueError):
+        limit = config.human_search_max_results
+    limit = max(1, min(limit, 10))
+    payload = {
+        "query": query,
+        "count": limit,
+        "need_content": bool(config.human_search_need_content),
+    }
+    try:
+        data = await asyncio.to_thread(
+            _human_deepseek_post,
+            "/v1/tools/search",
+            payload,
+            int(config.human_search_timeout_seconds),
+        )
+    except HumanSearchError as exc:
+        return f"联网搜索失败：{exc}"
+    return _format_human_search_results(query, data)
+
+
+@plugin.mount_sandbox_method(
+    SandboxMethodType.AGENT,
+    "human_fetch",
+    "抓取单个网页，返回标题和 Markdown 正文",
+)
+async def human_fetch(_ctx: AgentCtx, url: str, max_chars: int | None = None) -> str:
+    """抓取一个网页的正文，用于补充搜索摘要。
+
+    Args:
+        url (str): 要抓取的 HTTP/HTTPS 网页地址。
+        max_chars (int | None): 返回正文的最大字符数，默认使用配置。
+
+    Returns:
+        str: 网页标题和 Markdown 正文；失败时返回明确错误。
+    """
+    if not config.human_search_enabled:
+        return "联网抓取已关闭。"
+    url = (url or "").strip()
+    if len(url) > 8192:
+        return "human_fetch 的 URL 过长。"
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return "human_fetch 只接受带 host 的 HTTP/HTTPS URL。"
+    if parsed.username or parsed.password:
+        return "human_fetch 不接受带用户名或密码的 URL。"
+    try:
+        limit = config.human_fetch_max_chars if max_chars is None else int(max_chars)
+    except (TypeError, ValueError):
+        limit = config.human_fetch_max_chars
+    limit = max(500, min(limit, 20000))
+    try:
+        data = await asyncio.to_thread(
+            _human_deepseek_post,
+            "/v1/tools/fetch",
+            {"url": url},
+            int(config.human_search_timeout_seconds),
+        )
+    except HumanSearchError as exc:
+        return f"网页抓取失败：{exc}"
+    return _format_human_fetch_result(url, data, limit)
+
+
 # ============================================================
 # 8. 提示词注入
 # ============================================================
@@ -2636,6 +2871,24 @@ send_msg_text(_ck, "内容")
         else:
             lines.append("· 主动画图已关闭：只在用户明确要求时画。")
         lines.append("· 「绘图」用于生成新图；「表情管理」的 `xemo_get_best_emotion_path` 用于现有表情包，两者不要混用。")
+
+        lines.append("======【联网查询】======")
+        if cfg.human_search_enabled:
+            lines.append(
+                "· 涉及最新新闻、版本、价格、天气、活动、人物近况、外部事实时，先调用 `human_search(query, max_results)` 再回答。"
+            )
+            lines.append(
+                "· 搜索结果只作依据：用自然语言概括 1~2 条最相关信息，附上 URL；不要整段粘贴搜索结果，不要暴露内部字段。"
+            )
+            lines.append(
+                "· 摘要不够时再调用 `human_fetch(url)` 看正文；每轮最多 1 次 `human_search`、最多 2 次 `human_fetch`。"
+            )
+            lines.append(
+                "· 搜索失败、无结果或 Key 未配置时，直接说查不到或暂时无法联网，不要凭记忆编造实时信息。"
+            )
+            lines.append("· 日常闲聊、已有把握的常识、代码问题不要搜；不要为了显得勤奋而搜。")
+        else:
+            lines.append("· 联网搜索已关闭；需要实时信息时直接说明无法查询，不要编造。")
 
         if cfg.enable_memory:
             lines.append(

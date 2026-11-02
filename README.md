@@ -3,7 +3,7 @@
 一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
 > 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.1.0`
+> 当前版本：`3.2.0`
 > 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
 > 主要适配：OneBot V11 / NapCat（QQ）
 
@@ -48,6 +48,11 @@
   - 拒绝时不调用「绘图」/「多图绘制」，用符合人设的短句拒绝或转移话题
   - 主动画图使用独立概率、冷却和每日上限，不套用用户请求的拒绝概率
   - 提示词层约束，不会修改内置 draw 插件
+- **联网搜索 / 网页抓取**
+  - 提供 `human_search(query, max_results)` 和 `human_fetch(url, max_chars)`
+  - 底层使用 DeepSeek Search/Fetch API，Bearer Key 在插件配置中填写
+  - 搜索返回标题、摘要、来源和 URL；抓取返回网页 Markdown 正文
+  - Key 未配置、限流、余额不足或网络失败时明确报错，不静默编造
 - **长期记忆协作**
   - 不重复维护好感度分数；长期好感度由「好感度系统」负责
   - 支持 Nekro 自带记忆系统的被动注入
@@ -451,6 +456,13 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `draw_proactive_probability` | 每轮允许主动画图的独立概率，默认 0.1 |
 | `draw_proactive_cooldown_minutes` | 主动画图建议冷却，默认 180 分钟 |
 | `draw_proactive_max_per_day` | 主动画图每日上限，默认 1 张 |
+| `human_search_enabled` | 是否启用 `human_search` / `human_fetch` |
+| `human_search_api_key` | DeepSeek Search/Fetch Bearer Key，留空则不可用 |
+| `human_search_base_url` | DeepSeek API 地址，默认 `https://api.deepseek.com` |
+| `human_search_max_results` | 默认搜索结果数，默认 5 |
+| `human_search_timeout_seconds` | 搜索/抓取超时，默认 12 秒 |
+| `human_search_need_content` | 搜索是否返回网页正文，默认关闭 |
+| `human_fetch_max_chars` | 抓取正文最大字符数，默认 6000 |
 | `debug_log` | 详细日志；排查时临时开启 |
 
 > `config.yaml` 是当前生产配置参考，可能包含环境相关值；如果后续加入密钥，请改用环境变量或不要提交。

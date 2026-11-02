@@ -150,6 +150,18 @@
 | `draw_proactive_cooldown_minutes` | `180` | 【画图】主动画图冷却（分钟）：两次主动画图之间的建议最小间隔。 |
 | `draw_proactive_max_per_day` | `1` | 【画图】主动画图每日上限：每天最多主动画几张；0 表示不允许主动画。 |
 
+### 联网
+
+| 配置键 | 默认值 | 说明 |
+|---|---|---|
+| `human_search_enabled` | `True` | 【联网】启用 `human_search` / `human_fetch`：允许 AI 通过 DeepSeek Search/Fetch 查询实时网页信息。 |
+| `human_search_api_key` | 空 | 【联网】DeepSeek API Key：用于 Search/Fetch 的 Bearer Key；留空则联网工具不可用。 |
+| `human_search_base_url` | `https://api.deepseek.com` | 【联网】DeepSeek API 地址。 |
+| `human_search_max_results` | `5` | 【联网】默认搜索结果数，范围 1-10。 |
+| `human_search_timeout_seconds` | `12` | 【联网】Search/Fetch 单次请求超时（秒）。 |
+| `human_search_need_content` | `False` | 【联网】搜索是否返回网页正文；一般保持关闭，需要全文时用 `human_fetch`。 |
+| `human_fetch_max_chars` | `6000` | 【联网】`human_fetch` 返回正文的最大字符数，超出会截断。 |
+
 ### 回复方式
 
 | 配置键 | 默认值 | 说明 |
@@ -159,7 +171,7 @@
 | `quote_at_first_reply_quote_at` | `True` | 【回复方式】引用+@ → 首条也引用+@：对方引用你的消息并 @ 你时，第一条回复 @ 对方并引用刚刚触发的那条消息。 |
 | `non_at_first_reply_plain` | `True` | 【回复方式】私聊/叫名字/仅引用 → 首条纯文本：非 @ 触发时，第一条回复不 @、不引用。 |
 | `strip_punctuation` | `True` | 【回复方式】去掉回复中的标点符号：发送前自动删除句号、逗号、问号、感叹号、引号、括号等标点；@ 提及、链接、代码和路径会保留。 |
-| `punctuation_chars` | `。，！？；：、…—～·,.!?;:'"()[]{}<>《》〈〉「」『』（）【】“”‘’-/` | 【回复方式】要删除的标点字符：按字符删除，可自行增删；注意不要把 @ 提及、链接和代码里的符号误伤（这些会被保护）。 |
+| `punctuation_chars` | `。，！？；：、…—～~·,.!?;:'"()[]{}<>《》〈〉「」『』（）【】“”‘’-/` | 【回复方式】要删除的标点字符：按字符删除，可自行增删；@ 提及、链接、代码、路径、数字小数、负数、时间、`km/h` 等单位会被保护。 |
 
 ### 闸门
 
