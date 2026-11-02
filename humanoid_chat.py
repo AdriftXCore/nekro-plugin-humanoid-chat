@@ -73,7 +73,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.4.1",
+    version="3.4.2",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -1070,9 +1070,10 @@ def _normalize_quoted_url(value: Any) -> str:
     return url
 
 
-def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str, str]:
+def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str, str, List[str]]:
     summary = str(message.content_text or "").strip()
     urls: List[str] = []
+    image_refs: List[str] = []
     has_image = summary.startswith("[Image:")
     try:
         content_data = json.loads(message.content_data or "[]")
@@ -1082,8 +1083,18 @@ def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str, str]:
         for segment in content_data:
             if not isinstance(segment, dict):
                 continue
-            if str(segment.get("type") or "").lower() == "image":
+            seg_type = str(segment.get("type") or "").lower()
+            if seg_type == "image":
                 has_image = True
+                file_name = str(segment.get("file_name") or "").strip()
+                local_path = str(segment.get("local_path") or "").strip()
+                remote_url = str(segment.get("remote_url") or "").strip()
+                if file_name:
+                    image_refs.append(f"/app/uploads/{Path(file_name).name}")
+                elif local_path:
+                    image_refs.append(f"/app/uploads/{Path(local_path).name}")
+                elif remote_url:
+                    image_refs.append(remote_url)
             desc = str(segment.get("card_desc") or "").strip()
             if desc:
                 summary = desc
@@ -1108,13 +1119,13 @@ def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str, str]:
     kind = "link" if chosen else ("image" if has_image else "text")
     if kind == "image" and summary.startswith("[Image:"):
         summary = "（一张图片）"
-    return _clip_text(summary, 400), chosen, kind
+    return _clip_text(summary, 400), chosen, kind, list(dict.fromkeys(image_refs))
 
 
 async def _load_quoted_message(
     chat_key: str,
     trigger_msg_id: str,
-) -> Optional[Tuple[str, str, str, str]]:
+) -> Optional[Tuple[str, str, str, str, List[str]]]:
     if not chat_key or not trigger_msg_id:
         return None
     current = await DBChatMessage.filter(
@@ -1132,9 +1143,57 @@ async def _load_quoted_message(
     ).order_by("-id").first()
     if not quoted:
         return None
-    summary, url, kind = _quoted_message_info(quoted)
+    summary, url, kind, image_refs = _quoted_message_info(quoted)
     sender = str(quoted.sender_nickname or quoted.sender_name or "").strip()
-    return sender or "某人", summary, url, kind
+    return sender or "某人", summary, url, kind, image_refs
+
+
+async def _quoted_image_visible(chat_key: str, image_refs: List[str]) -> bool:
+    if not image_refs:
+        return False
+    try:
+        from nekro_agent.core.config import config as core_config
+
+        image_limit = max(1, int(getattr(core_config, "AI_VISION_IMAGE_LIMIT", 5)))
+    except Exception:
+        image_limit = 5
+    targets: Set[str] = set()
+    for ref in image_refs:
+        text = str(ref or "").strip()
+        if not text:
+            continue
+        targets.add(text if text.startswith(("http://", "https://")) else Path(text).name)
+    if not targets:
+        return False
+    messages = await DBChatMessage.filter(
+        chat_key=chat_key,
+        is_recalled=False,
+    ).order_by("-send_timestamp").limit(80).all()
+    seen: Set[str] = set()
+    for message in messages:
+        try:
+            content_data = json.loads(message.content_data or "[]")
+        except Exception:
+            continue
+        if not isinstance(content_data, list):
+            continue
+        for segment in reversed(content_data):
+            if not isinstance(segment, dict):
+                continue
+            if str(segment.get("type") or "").lower() != "image":
+                continue
+            file_name = str(segment.get("file_name") or "").strip()
+            local_path = str(segment.get("local_path") or "").strip()
+            remote_url = str(segment.get("remote_url") or "").strip()
+            key = file_name or (Path(local_path).name if local_path else remote_url)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            if key in targets:
+                return True
+            if len(seen) >= image_limit:
+                return False
+    return False
 
 
 _RE_LINK_URL = re.compile(r"https?://[^\s\"'<>\\]+", re.IGNORECASE)
@@ -2474,13 +2533,31 @@ if NONEBOT_AVAILABLE:
 
 @plugin.mount_on_user_message()
 async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSignal:
-    """夜间只记录不触发，避免 Nekro 自带的随机/内容触发绕过作息设定。"""
+    """处理引用图片硬拦截与夜间免打扰。"""
     try:
-        if not _is_night():
-            return MsgSignal.CONTINUE
         chat_key = str(getattr(chat_message, "chat_key", "") or "")
         chat_type = str(getattr(chat_message, "chat_type", "") or "")
         is_tome = bool(getattr(chat_message, "is_tome", False))
+        if chat_key and (is_tome or "private" in chat_key or chat_type == "private"):
+            ext_data = getattr(chat_message, "ext_data", {}) or {}
+            ref_msg_id = str(ext_data.get("ref_msg_id") or "").strip() if isinstance(ext_data, dict) else ""
+            if ref_msg_id:
+                quoted = await DBChatMessage.filter(
+                    chat_key=chat_key,
+                    message_id=ref_msg_id,
+                ).order_by("-id").first()
+                if quoted:
+                    _, _, kind, image_refs = _quoted_message_info(quoted)
+                    if kind == "image" and not await _quoted_image_visible(chat_key, image_refs):
+                        await message.send_text(
+                            chat_key,
+                            "这张图我没看到，你直接说图里是什么吧",
+                            _ctx,
+                        )
+                        _log("info", f"引用图片不可见，已硬拦截: {chat_key} ref={ref_msg_id}")
+                        return MsgSignal.BLOCK_TRIGGER
+        if not _is_night():
+            return MsgSignal.CONTINUE
         if "private" in chat_key or chat_type == "private":
             if not config.night_direct_reply:
                 _log("debug", "夜间私聊仅记录不触发")
@@ -3203,15 +3280,22 @@ send_msg_text(_ck, "内容")
 """.strip().splitlines(),
         )
         if quoted_message:
-            quoted_sender, quoted_summary, quoted_url, quoted_kind = quoted_message
+            quoted_sender, quoted_summary, quoted_url, quoted_kind, quoted_images = quoted_message
             lines.append("======【引用消息】======")
             lines.append(f"· 对方引用了「{quoted_sender}」的消息：")
             if quoted_summary:
                 lines.append(f"  「{quoted_summary}」")
             if quoted_kind == "image":
                 lines.append("· 对方引用的是图片，不是网页链接。")
-                lines.append("· 不要调用 human_fetch / human_search 去查上下文里的 B 站链接；只根据图片或已有内容回答。")
-                lines.append("· 如果看不到图片内容，就直接说看不清，不要拿之前的链接代替。")
+                if quoted_images:
+                    lines.append("· 引用图片路径：" + "、".join(quoted_images))
+                    lines.append(
+                        "· 在 recent_chat_images 中匹配这个路径的图片，直接查看并回答；"
+                        "不要调用 human_fetch / human_search 去查上下文里的 B 站链接。"
+                    )
+                else:
+                    lines.append("· 这张图片没有可用路径。")
+                lines.append("· 如果 recent_chat_images 里找不到这张图，就直接说没看到，不要拿之前的链接或角色代替。")
             elif quoted_url:
                 lines.append(f"· 引用链接：{quoted_url}")
                 lines.append(
