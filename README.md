@@ -3,7 +3,7 @@
 一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
 > 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.5.0`
+> 当前版本：`3.5.1`
 > 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
 > 主要适配：OneBot V11 / NapCat（QQ）
 
@@ -62,6 +62,7 @@
 - **Bangumi 动漫资料**
   - 提供 `human_bangumi_search`、`human_bangumi_subject`、`human_bangumi_characters`、`human_bangumi_calendar`
   - 查询动画条目、评分、简介、角色/声优和每日放送
+  - 遇到具体动漫事实且 AI 不确定时主动查 Bangumi；普通闲聊/玩梗不查
   - Token 可选，默认匿名查询公开条目；Token 只放插件配置，不写入仓库
 - **长期记忆协作**
   - 不重复维护好感度分数；长期好感度由「好感度系统」负责

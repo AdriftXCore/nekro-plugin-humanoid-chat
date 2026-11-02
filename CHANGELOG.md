@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.5.1 - 2026-11-02
+
+- 强化 Bangumi 触发规则：群聊涉及具体动漫作品、角色、声优、新番、评分、播出时间等可验证事实，且 AI 不确定时，必须先查 Bangumi，不能凭记忆编。
+- 闲聊、表达喜好、玩梗、没有具体事实要确认时不查，避免打扰群聊。
+- 限制每轮最多 1 次搜索，查不到明确说没查到，不连续重试。
+- 版本升至 `3.5.1`。
+
 ## 3.5.0 - 2026-11-02
 
 - 新增 Bangumi 动漫资料工具：`human_bangumi_search`、`human_bangumi_subject`、`human_bangumi_characters`、`human_bangumi_calendar`。

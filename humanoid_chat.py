@@ -73,7 +73,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.5.0",
+    version="3.5.1",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -3973,10 +3973,13 @@ send_msg_text(_ck, "内容")
         if cfg.bangumi_enabled:
             lines.append("======【Bangumi 动漫资料】======")
             lines.append(
-                "· 涉及动漫/新番/动画作品、播出时间、评分、角色、声优、制作信息时，优先使用 Bangumi 工具。"
+                "· 群聊出现具体动漫作品、角色、声优、新番、评分、播出时间等可验证事实时，"
+                "如果你不确定、只有模糊印象，或需要确认最新信息，先调用 Bangumi，不要凭记忆编。"
             )
+            lines.append("· 只是闲聊、表达喜好、玩梗、没有具体事实要确认时，不要查。")
             lines.append(
-                "· 先用 `human_bangumi_search(keyword)` 找条目；有多个同名作品时先列候选让用户确认，不要随便选。"
+                "· 有作品名时先用 `human_bangumi_search(keyword)` 找条目；"
+                "有多个同名作品时先列候选让用户确认，不要随便选。"
             )
             lines.append(
                 "· 确定条目 ID 后，用 `human_bangumi_subject(subject_id)` 查详情，"
@@ -3984,6 +3987,9 @@ send_msg_text(_ck, "内容")
             )
             lines.append(
                 "· 用户问今天/周几有什么新番时，用 `human_bangumi_calendar(weekday)` 查每日放送。"
+            )
+            lines.append(
+                "· 每轮最多 1 次搜索；查不到就明确说没查到，不要连续重试或编造。"
             )
             lines.append(
                 "· 不要直接输出 JSON 或 Bangumi ID；用自然语言总结，并说明 Bangumi 信息可能滞后。"
