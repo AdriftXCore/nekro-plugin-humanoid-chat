@@ -73,7 +73,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.5.1",
+    version="3.6.0",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -776,6 +776,24 @@ class HumanoidConfig(ConfigBase):
         description="需要有效 Access Token；没有权限时 Bangumi 会忽略该选项。",
     )
 
+    red_packet_enabled: bool = Field(
+        default=True,
+        title="【红包】识别红包卡片",
+        description="识别群里的红包卡片，并让 AI 在被要求收红包时用“QQ没实名”推脱。不会实际领取。",
+    )
+    red_packet_refusal_reason: str = Field(
+        default="我QQ没实名，收不了红包",
+        title="【红包】拒绝理由",
+        description="AI 推脱时参考的理由，可自然改写，不要求逐字重复。",
+    )
+    red_packet_context_minutes: int = Field(
+        default=10,
+        ge=1,
+        le=120,
+        title="【红包】上下文有效期（分钟）",
+        description="检测到红包后，多久内仍把红包信息注入提示词。",
+    )
+
     # --- 回复方式 ---
     follow_trigger_reply_style: bool = Field(
         default=True,
@@ -1382,6 +1400,57 @@ def _quoted_no_link_reply(summary: str) -> str:
     return "你引用的消息没有链接内容，我不确定你指什么。"
 
 
+def _red_packet_info(message: Any) -> Optional[Dict[str, str]]:
+    content_text = str(getattr(message, "content_text", "") or "")
+    parts: List[str] = [content_text]
+    segments = getattr(message, "content_data", None)
+    if isinstance(segments, list):
+        for segment in segments:
+            if isinstance(segment, dict):
+                seg_type = str(segment.get("type") or "")
+                for key in ("text", "card_title", "card_desc"):
+                    value = segment.get(key)
+                    if value:
+                        parts.append(str(value))
+                json_data = segment.get("json_data")
+            else:
+                raw_type = getattr(segment, "type", "")
+                seg_type = str(getattr(raw_type, "value", raw_type) or "")
+                for key in ("text", "card_title", "card_desc"):
+                    value = getattr(segment, key, None)
+                    if value:
+                        parts.append(str(value))
+                json_data = getattr(segment, "json_data", None)
+            if seg_type not in {"json", "json_card", "lightapp", "miniapp"}:
+                continue
+            if json_data:
+                try:
+                    parts.append(json.dumps(json_data, ensure_ascii=False))
+                except Exception:
+                    parts.append(str(json_data))
+    combined = "\n".join(parts)
+    lowered = combined.lower()
+    if "红包" not in combined and "redpacket" not in lowered and "red_packet" not in lowered:
+        return None
+    title = ""
+    for segment in segments if isinstance(segments, list) else []:
+        if isinstance(segment, dict):
+            title = str(segment.get("card_desc") or segment.get("card_title") or "").strip()
+        else:
+            title = str(getattr(segment, "card_desc", "") or getattr(segment, "card_title", "") or "").strip()
+        if title:
+            break
+    if not title:
+        match = re.search(r'标题为["“](.+?)["”]', combined)
+        if match:
+            title = match.group(1).strip()
+    if not title:
+        match = re.search(r'\[QQ红包\]([^\n]+)', combined)
+        if match:
+            title = match.group(1).strip()
+    return {"text": combined, "title": _clip_text(title or "红包", 80)}
+
+
 async def _load_quoted_message(
     chat_key: str,
     trigger_msg_id: str,
@@ -1635,6 +1704,7 @@ _LAST_INBOUND_MSG_ID: Dict[str, Tuple[float, str]] = {}
 _LAST_INBOUND_TEXT: Dict[str, str] = {}
 _RECENT_SENT: Dict[str, Deque[str]] = {}
 _RECENT_LINKS: Dict[str, Deque[Dict[str, Any]]] = {}
+_LAST_RED_PACKET: Dict[str, Dict[str, Any]] = {}
 _SEND_LOCKS: Dict[str, asyncio.Lock] = {}
 _BG_TASKS: Dict[str, asyncio.Task] = {}
 _LAST_MEDIA_SENT: Dict[str, float] = {}
@@ -2803,6 +2873,18 @@ async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSig
         bot_names |= set(_split_csv(config.extra_bot_names))
         content_lower = content_text.lower()
         bot_called = any(name and name.lower() in content_lower for name in bot_names)
+        if chat_key and config.red_packet_enabled:
+            red_packet = _red_packet_info(chat_message)
+            if red_packet:
+                red_text_lower = red_packet["text"].lower()
+                targeted = any(name and name.lower() in red_text_lower for name in bot_names)
+                _LAST_RED_PACKET[chat_key] = {
+                    "ts": _now(),
+                    "title": red_packet["title"],
+                    "targeted": targeted,
+                    "sender_id": str(getattr(chat_message, "platform_userid", "") or ""),
+                }
+                _log("info", f"红包识别: {chat_key} title={red_packet['title']} targeted={targeted}")
         if chat_key and (is_tome or "private" in chat_key or chat_type == "private" or bot_called):
             ext_data = getattr(chat_message, "ext_data", {}) or {}
             ref_msg_id = str(ext_data.get("ref_msg_id") or "").strip() if isinstance(ext_data, dict) else ""
@@ -3996,6 +4078,21 @@ send_msg_text(_ck, "内容")
             )
             lines.append("· 新闻、实时事件、非动漫资料仍用 human_search；不要把 Bangumi 当新闻源。")
 
+        if cfg.red_packet_enabled:
+            lines.append("======【红包】======")
+            lines.append("· 不要主动提群里的红包。")
+            lines.append(
+                "· 如果有人明确让你收/领/抢/点红包，用符合人设的 1 句短话推脱；"
+                f"理由参考「{cfg.red_packet_refusal_reason}」，可以自然改写。"
+            )
+            lines.append("· 不要调用任何红包领取工具，不要说“收到了”或金额，不要反复解释。")
+            red_packet = _LAST_RED_PACKET.get(chat_key)
+            if red_packet and _now() - float(red_packet.get("ts") or 0) <= max(1, int(cfg.red_packet_context_minutes)) * 60:
+                targeted = "是" if red_packet.get("targeted") else "否"
+                lines.append(f"· 最近群里有红包：标题「{red_packet.get('title') or '红包'}」；是否点名你：{targeted}。")
+                if red_packet.get("targeted"):
+                    lines.append("· 即使点名你，也不要主动提；只有用户要求时才自然说一句“给我的也没用，我QQ没实名”。")
+
         if cfg.enable_memory:
             lines.append(
                 "· 遇到值得以后自然提起的小事（喜好、计划、近况、约定），调用 `humanoid_remember(topic, feeling)`；"
@@ -4192,6 +4289,7 @@ async def clean_up() -> str:
     _LAST_INBOUND_TEXT.clear()
     _RECENT_SENT.clear()
     _RECENT_LINKS.clear()
+    _LAST_RED_PACKET.clear()
     _SEND_LOCKS.clear()
     _LAST_MEDIA_SENT.clear()
     _LAST_STICKER_HINT.clear()

@@ -110,6 +110,9 @@ bangumi_search_limit: 5
 bangumi_character_limit: 10
 bangumi_calendar_limit: 10
 bangumi_include_nsfw: false
+red_packet_enabled: true
+red_packet_refusal_reason: 我QQ没实名，收不了红包
+red_packet_context_minutes: 10
 follow_trigger_reply_style: true
 at_first_reply_plain: true
 quote_at_first_reply_quote_at: true

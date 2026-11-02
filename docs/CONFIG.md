@@ -185,6 +185,14 @@
 | `bangumi_calendar_limit` | `10` | 【Bangumi】每日放送结果数。 |
 | `bangumi_include_nsfw` | `False` | 【Bangumi】是否包含 NSFW 条目；需要有效 Token。 |
 
+### 红包
+
+| 配置键 | 默认值 | 说明 |
+|---|---|---|
+| `red_packet_enabled` | `True` | 【红包】识别群红包卡片，并让 AI 在被要求收红包时用“QQ没实名”推脱；不会实际领取。 |
+| `red_packet_refusal_reason` | `我QQ没实名，收不了红包` | 【红包】AI 推脱时参考的理由，可自然改写。 |
+| `red_packet_context_minutes` | `10` | 【红包】检测到红包后，多久内仍把红包信息注入提示词。 |
+
 ### 回复方式
 
 | 配置键 | 默认值 | 说明 |

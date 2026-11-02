@@ -48,6 +48,7 @@
 
 - 本插件维护：分段/延迟、情绪/精力、群档案、提示词、`/force_mute`、`/group_profile_gen`、`human_search` / `human_fetch` 联网工具。
 - 联网搜索/抓取使用 DeepSeek Search/Fetch API；B 站链接会额外调用公开 API 读取视频信息和热门评论；Bangumi 资料使用 api.bgm.tv；Key/Token 只放插件配置，不写入仓库。
+- 红包只做识别和 AI 话术推脱，不领取、不接 NapCat 抢红包插件。
 - 实际禁言/撤回/踢人由 `XiaoJiu.group_admin` 执行；不要在本插件里重复实现。
 - 表情由 `xggm.emotions` 负责；不要接管图库或表情 ID。
 - 长期好感度由 `liugu.nekro_favorability` 负责；本插件只有即时熟悉度。

@@ -3,7 +3,7 @@
 一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
 > 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.5.1`
+> 当前版本：`3.6.0`
 > 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
 > 主要适配：OneBot V11 / NapCat（QQ）
 
@@ -64,6 +64,11 @@
   - 查询动画条目、评分、简介、角色/声优和每日放送
   - 遇到具体动漫事实且 AI 不确定时主动查 Bangumi；普通闲聊/玩梗不查
   - Token 可选，默认匿名查询公开条目；Token 只放插件配置，不写入仓库
+- **红包识别与推脱**
+  - 识别群里的红包卡片，记录标题和是否点名 KONA
+  - 不主动提红包；有人让 KONA 收/领/抢红包时，用“QQ没实名”自然推脱
+  - 不领取、不假装收到、不报金额
+
 - **长期记忆协作**
   - 不重复维护好感度分数；长期好感度由「好感度系统」负责
   - 支持 Nekro 自带记忆系统的被动注入
@@ -489,6 +494,9 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `bangumi_character_limit` | Bangumi 默认角色结果数 |
 | `bangumi_calendar_limit` | Bangumi 每日放送结果数 |
 | `bangumi_include_nsfw` | 是否包含 NSFW 条目 |
+| `red_packet_enabled` | 是否识别红包卡片 |
+| `red_packet_refusal_reason` | 拒绝收红包的参考理由 |
+| `red_packet_context_minutes` | 红包上下文有效期，默认 10 分钟 |
 | `debug_log` | 详细日志；排查时临时开启 |
 
 > `config.yaml` 是当前生产配置参考，可能包含环境相关值；如果后续加入密钥，请改用环境变量或不要提交。
