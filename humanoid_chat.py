@@ -73,7 +73,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.4.0",
+    version="3.4.1",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -910,6 +910,16 @@ def _is_bilibili_url(url: str) -> bool:
     )
 
 
+def _is_bilibili_video_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    if host == "b23.tv" or host.endswith(".b23.tv") or host.endswith("bili2233.cn"):
+        return True
+    if host == "bilibili.com" or host.endswith(".bilibili.com"):
+        return bool(_RE_BILI_BVID.search(url) or _RE_BILI_AVID.search(url))
+    return False
+
+
 def _resolve_bili_url(url: str, timeout: int) -> str:
     if "b23.tv" not in urllib.parse.urlparse(url).netloc.lower():
         return url
@@ -1060,9 +1070,10 @@ def _normalize_quoted_url(value: Any) -> str:
     return url
 
 
-def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str]:
+def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str, str]:
     summary = str(message.content_text or "").strip()
     urls: List[str] = []
+    has_image = summary.startswith("[Image:")
     try:
         content_data = json.loads(message.content_data or "[]")
     except Exception:
@@ -1071,6 +1082,8 @@ def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str]:
         for segment in content_data:
             if not isinstance(segment, dict):
                 continue
+            if str(segment.get("type") or "").lower() == "image":
+                has_image = True
             desc = str(segment.get("card_desc") or "").strip()
             if desc:
                 summary = desc
@@ -1092,13 +1105,16 @@ def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str]:
     normalized = [_normalize_quoted_url(url) for url in urls if url]
     bili_urls = [url for url in normalized if _is_bilibili_url(url)]
     chosen = bili_urls[0] if bili_urls else (normalized[0] if normalized else "")
-    return _clip_text(summary, 400), chosen
+    kind = "link" if chosen else ("image" if has_image else "text")
+    if kind == "image" and summary.startswith("[Image:"):
+        summary = "（一张图片）"
+    return _clip_text(summary, 400), chosen, kind
 
 
 async def _load_quoted_message(
     chat_key: str,
     trigger_msg_id: str,
-) -> Optional[Tuple[str, str, str]]:
+) -> Optional[Tuple[str, str, str, str]]:
     if not chat_key or not trigger_msg_id:
         return None
     current = await DBChatMessage.filter(
@@ -1116,9 +1132,9 @@ async def _load_quoted_message(
     ).order_by("-id").first()
     if not quoted:
         return None
-    summary, url = _quoted_message_info(quoted)
+    summary, url, kind = _quoted_message_info(quoted)
     sender = str(quoted.sender_nickname or quoted.sender_name or "").strip()
-    return sender or "某人", summary, url
+    return sender or "某人", summary, url, kind
 
 
 _RE_LINK_URL = re.compile(r"https?://[^\s\"'<>\\]+", re.IGNORECASE)
@@ -1208,6 +1224,29 @@ def _get_recent_links(chat_key: str) -> List[Dict[str, Any]]:
 def _is_explicit_link_reference(text: str) -> bool:
     lowered = str(text or "").lower()
     return any(word in lowered for word in _LINK_REFERENCE_WORDS)
+
+
+def _should_block_context_fetch(chat_key: str, url: str) -> bool:
+    cache = _TRIGGER_CACHE.get(chat_key, {})
+    if cache.get("link_fetch_mode") not in {"vague", "quoted"}:
+        return False
+    if cache.get("link_fetch_allow"):
+        return False
+    requested = _normalize_quoted_url(url)
+    context_urls = {
+        _normalize_quoted_url(item)
+        for item in (cache.get("link_context_urls") or [])
+        if item
+    }
+    if requested not in context_urls:
+        return False
+    current_text = _LAST_INBOUND_TEXT.get(chat_key, "").replace("\\/", "/")
+    current_urls = {
+        _normalize_quoted_url(item.rstrip(".,;，。)]}"))
+        for item in _RE_LINK_URL.findall(current_text)
+        if item
+    }
+    return requested not in current_urls
 
 
 # ============================================================
@@ -2986,13 +3025,18 @@ async def human_fetch(_ctx: AgentCtx, url: str, max_chars: int | None = None) ->
         return "human_fetch 只接受带 host 的 HTTP/HTTPS URL。"
     if parsed.username or parsed.password:
         return "human_fetch 不接受带用户名或密码的 URL。"
+    _log("info", f"human_fetch: url={url}")
+    chat_key = _ctx.from_chat_key or _ctx.chat_key
+    if _should_block_context_fetch(chat_key, url):
+        _log("info", f"human_fetch 被拦截: 本轮不自动抓取上下文链接 url={url}")
+        return "本轮判定不自动抓取这个上下文链接；如果确实需要，请明确说要看这个链接/评论。"
     try:
         limit = config.human_fetch_max_chars if max_chars is None else int(max_chars)
     except (TypeError, ValueError):
         limit = config.human_fetch_max_chars
     limit = max(500, min(limit, 20000))
     timeout = int(config.human_search_timeout_seconds)
-    if _is_bilibili_url(url):
+    if _is_bilibili_video_url(url):
         comment_limit = (
             max(0, min(int(config.bili_comments_limit), 20))
             if config.bili_comments_enabled
@@ -3052,15 +3096,20 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
         quoted_url = quoted_message[2] if quoted_message else ""
         link_fetch_mode = ""
         link_fetch_allow = False
+        link_context_urls: List[str] = []
         recent_link_items: List[Dict[str, Any]] = []
         link_fetch_roll = random.random()
+        cache.pop("link_fetch_mode", None)
+        cache.pop("link_fetch_allow", None)
+        cache.pop("link_context_urls", None)
         if cfg.human_fetch_enabled:
             if quoted_url:
                 link_fetch_mode = "quoted"
                 link_fetch_allow = bool(cfg.quoted_link_always_fetch) or (
                     link_fetch_roll < cfg.link_fetch_probability
                 )
-            elif cfg.link_fetch_enabled:
+                link_context_urls = [quoted_url]
+            elif quoted_message is None and cfg.link_fetch_enabled:
                 recent_link_items = _get_recent_links(chat_key)
                 if recent_link_items:
                     explicit_reference = _is_explicit_link_reference(_LAST_INBOUND_TEXT.get(chat_key, ""))
@@ -3068,9 +3117,17 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
                     link_fetch_allow = explicit_reference or (
                         link_fetch_roll < cfg.link_fetch_probability
                     )
+                    link_context_urls = [
+                        _normalize_quoted_url(item.get("url"))
+                        for item in recent_link_items
+                        if item.get("url")
+                    ]
             if quoted_url:
                 _log("info", f"引用消息链接: {quoted_url}")
             if link_fetch_mode:
+                cache["link_fetch_mode"] = link_fetch_mode
+                cache["link_fetch_allow"] = link_fetch_allow
+                cache["link_context_urls"] = link_context_urls
                 _log(
                     "info",
                     f"链接抓取判定: mode={link_fetch_mode} allow={link_fetch_allow} "
@@ -3146,12 +3203,16 @@ send_msg_text(_ck, "内容")
 """.strip().splitlines(),
         )
         if quoted_message:
-            quoted_sender, quoted_summary, quoted_url = quoted_message
+            quoted_sender, quoted_summary, quoted_url, quoted_kind = quoted_message
             lines.append("======【引用消息】======")
             lines.append(f"· 对方引用了「{quoted_sender}」的消息：")
             if quoted_summary:
                 lines.append(f"  「{quoted_summary}」")
-            if quoted_url:
+            if quoted_kind == "image":
+                lines.append("· 对方引用的是图片，不是网页链接。")
+                lines.append("· 不要调用 human_fetch / human_search 去查上下文里的 B 站链接；只根据图片或已有内容回答。")
+                lines.append("· 如果看不到图片内容，就直接说看不清，不要拿之前的链接代替。")
+            elif quoted_url:
                 lines.append(f"· 引用链接：{quoted_url}")
                 lines.append(
                     "· 用户说「这个/这条/这个视频/评论」时，默认指这条引用消息；"
