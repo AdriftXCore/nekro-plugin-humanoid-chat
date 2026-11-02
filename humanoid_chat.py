@@ -73,7 +73,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.4.4",
+    version="3.4.5",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -1075,6 +1075,7 @@ def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str, str, List[st
     urls: List[str] = []
     image_refs: List[str] = []
     has_image = summary.startswith("[Image:")
+    has_card = summary.startswith("[卡片消息]") or "卡片消息" in summary
     try:
         content_data = json.loads(message.content_data or "[]")
     except Exception:
@@ -1084,6 +1085,8 @@ def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str, str, List[st
             if not isinstance(segment, dict):
                 continue
             seg_type = str(segment.get("type") or "").lower()
+            if seg_type == "json_card":
+                has_card = True
             if seg_type == "image":
                 has_image = True
                 file_name = str(segment.get("file_name") or "").strip()
@@ -1116,7 +1119,14 @@ def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str, str, List[st
     normalized = [_normalize_quoted_url(url) for url in urls if url]
     bili_urls = [url for url in normalized if _is_bilibili_url(url)]
     chosen = bili_urls[0] if bili_urls else (normalized[0] if normalized else "")
-    kind = "link" if chosen else ("image" if has_image else "text")
+    if chosen:
+        kind = "link"
+    elif has_image:
+        kind = "image"
+    elif has_card:
+        kind = "card"
+    else:
+        kind = "text"
     if kind == "image" and summary.startswith("[Image:"):
         summary = "（一张图片）"
     return _clip_text(summary, 400), chosen, kind, list(dict.fromkeys(image_refs))
@@ -2575,13 +2585,13 @@ async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSig
                         )
                         _log("info", f"引用图片不可见，已硬拦截: {chat_key} ref={ref_msg_id}")
                         return MsgSignal.BLOCK_TRIGGER
-                    if kind == "text":
+                    if kind == "card":
                         await message.send_text(
                             chat_key,
                             _quoted_no_link_reply(summary),
                             _ctx,
                         )
-                        _log("info", f"无链接引用，已硬拦截: {chat_key} ref={ref_msg_id}")
+                        _log("info", f"无链接卡片引用，已硬拦截: {chat_key} ref={ref_msg_id}")
                         return MsgSignal.BLOCK_TRIGGER
         if not _is_night():
             return MsgSignal.CONTINUE
