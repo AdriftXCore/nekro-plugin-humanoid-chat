@@ -3,7 +3,7 @@
 一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
 > 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.3.1`
+> 当前版本：`3.4.0`
 > 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
 > 主要适配：OneBot V11 / NapCat（QQ）
 
@@ -54,7 +54,8 @@
   - 搜索返回标题、摘要、来源和 URL；抓取返回网页 Markdown 正文
   - B 站视频链接会直接读取公开 API，自动附带标题、UP 主、播放数据和热门评论
   - 用户引用卡片/消息时，会把被引用消息的链接注入提示词，优先使用引用链接而不是上下文其它链接
-  - Key 未配置、限流、余额不足或网络失败时明确报错，不静默编造
+  - 明确引用 100% 允许抓取；模糊指代按 `link_fetch_probability` 概率提示，AI 再判断相关性
+  - `human_fetch` 可独立开关；Key 未配置、限流、余额不足或网络失败时明确报错，不静默编造
 - **长期记忆协作**
   - 不重复维护好感度分数；长期好感度由「好感度系统」负责
   - 支持 Nekro 自带记忆系统的被动注入
@@ -458,7 +459,8 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `draw_proactive_probability` | 每轮允许主动画图的独立概率，默认 0.1 |
 | `draw_proactive_cooldown_minutes` | 主动画图建议冷却，默认 180 分钟 |
 | `draw_proactive_max_per_day` | 主动画图每日上限，默认 1 张 |
-| `human_search_enabled` | 是否启用 `human_search` / `human_fetch` |
+| `human_search_enabled` | 是否启用 `human_search` |
+| `human_fetch_enabled` | 是否启用 `human_fetch` |
 | `human_search_api_key` | DeepSeek Search/Fetch Bearer Key，留空则不可用 |
 | `human_search_base_url` | DeepSeek API 地址，默认 `https://api.deepseek.com` |
 | `human_search_max_results` | 默认搜索结果数，默认 5 |
@@ -468,6 +470,11 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `bili_comments_enabled` | B 站链接是否自动附带评论 |
 | `bili_comments_limit` | B 站评论条数，默认 10 |
 | `bili_comments_sort` | B 站评论排序：`hot` / `time` |
+| `link_fetch_enabled` | 是否允许根据最近链接上下文抓取 |
+| `link_fetch_probability` | 模糊指代自动抓取概率，默认 0.3 |
+| `link_context_limit` | 最近链接候选数量，默认 5 |
+| `link_context_max_age_minutes` | 最近链接有效期，默认 30 分钟 |
+| `quoted_link_always_fetch` | 明确引用链接时是否 100% 允许抓取 |
 | `debug_log` | 详细日志；排查时临时开启 |
 
 > `config.yaml` 是当前生产配置参考，可能包含环境相关值；如果后续加入密钥，请改用环境变量或不要提交。

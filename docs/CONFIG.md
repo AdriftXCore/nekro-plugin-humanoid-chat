@@ -154,7 +154,8 @@
 
 | 配置键 | 默认值 | 说明 |
 |---|---|---|
-| `human_search_enabled` | `True` | 【联网】启用 `human_search` / `human_fetch`：允许 AI 通过 DeepSeek Search/Fetch 查询实时网页信息。 |
+| `human_search_enabled` | `True` | 【联网】启用 `human_search`：允许 AI 通过 DeepSeek Search 查询实时网页信息。 |
+| `human_fetch_enabled` | `True` | 【联网】启用 `human_fetch`：允许 AI 抓取网页正文与 B 站评论；关闭后不会调用抓取工具。 |
 | `human_search_api_key` | 空 | 【联网】DeepSeek API Key：用于 Search/Fetch 的 Bearer Key；留空则联网工具不可用。 |
 | `human_search_base_url` | `https://api.deepseek.com` | 【联网】DeepSeek API 地址。 |
 | `human_search_max_results` | `5` | 【联网】默认搜索结果数，范围 1-10。 |
@@ -164,6 +165,11 @@
 | `bili_comments_enabled` | `True` | 【联网】B站视频自动附带评论：`human_fetch` 遇到 B 站链接时调用公开 API 获取标题、简介和评论。 |
 | `bili_comments_limit` | `10` | 【联网】B站评论条数：默认 10，0 表示只返回视频信息。 |
 | `bili_comments_sort` | `hot` | 【联网】B站评论排序：`hot` 热门，`time` 最新。 |
+| `link_fetch_enabled` | `True` | 【联网】允许 AI 根据最近链接上下文判断是否调用 `human_fetch`。 |
+| `link_fetch_probability` | `0.3` | 【联网】模糊指代时的自动抓取概率；明确引用不受此限制。 |
+| `link_context_limit` | `5` | 【联网】注入提示词的最近链接候选数量。 |
+| `link_context_max_age_minutes` | `30` | 【联网】最近链接有效期（分钟）。 |
+| `quoted_link_always_fetch` | `True` | 【联网】明确引用带链接消息时，100% 允许抓取。 |
 
 ### 回复方式
 

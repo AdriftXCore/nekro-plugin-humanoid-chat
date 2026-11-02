@@ -86,6 +86,7 @@ draw_proactive_probability: 0.1
 draw_proactive_cooldown_minutes: 180
 draw_proactive_max_per_day: 1
 human_search_enabled: true
+human_fetch_enabled: true
 human_search_api_key: ''
 human_search_base_url: https://api.deepseek.com
 human_search_max_results: 5
@@ -95,6 +96,11 @@ human_fetch_max_chars: 6000
 bili_comments_enabled: true
 bili_comments_limit: 10
 bili_comments_sort: hot
+link_fetch_enabled: true
+link_fetch_probability: 0.3
+link_context_limit: 5
+link_context_max_age_minutes: 30
+quoted_link_always_fetch: true
 follow_trigger_reply_style: true
 at_first_reply_plain: true
 quote_at_first_reply_quote_at: true

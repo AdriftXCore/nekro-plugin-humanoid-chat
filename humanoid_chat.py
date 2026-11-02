@@ -73,7 +73,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.3.1",
+    version="3.4.0",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -627,8 +627,13 @@ class HumanoidConfig(ConfigBase):
 
     human_search_enabled: bool = Field(
         default=True,
-        title="【联网】启用 human_search / human_fetch",
-        description="允许 AI 通过 DeepSeek Search/Fetch 查询实时网页信息；Key 未配置时会明确报错。",
+        title="【联网】启用 human_search",
+        description="允许 AI 通过 DeepSeek Search 查询实时网页信息；Key 未配置时会明确报错。",
+    )
+    human_fetch_enabled: bool = Field(
+        default=True,
+        title="【联网】启用 human_fetch",
+        description="允许 AI 抓取网页正文与 B 站评论；关闭后不会调用 human_fetch。",
     )
     human_search_api_key: str = Field(
         default="",
@@ -683,6 +688,37 @@ class HumanoidConfig(ConfigBase):
         default="hot",
         title="【联网】B站评论排序",
         description="hot=热门，time=最新；其它值按热门处理。",
+    )
+    link_fetch_enabled: bool = Field(
+        default=True,
+        title="【联网】上下文链接自动抓取",
+        description="允许 AI 根据最近链接上下文判断是否调用 human_fetch；关闭后不会主动提示抓取。",
+    )
+    link_fetch_probability: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        title="【联网】模糊指代抓取概率",
+        description="用户只说“这个/刚才那个”等模糊指代时，本轮允许自动抓取的概率。明确引用不受此限制。",
+    )
+    link_context_limit: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        title="【联网】最近链接数量",
+        description="注入提示词的最近链接候选数量。",
+    )
+    link_context_max_age_minutes: int = Field(
+        default=30,
+        ge=1,
+        le=240,
+        title="【联网】最近链接有效期（分钟）",
+        description="超过该时间的链接不再作为自动抓取候选。",
+    )
+    quoted_link_always_fetch: bool = Field(
+        default=True,
+        title="【联网】明确引用链接 100% 抓取",
+        description="用户引用带链接的消息时，直接允许抓取，不受模糊指代概率影响。",
     )
 
     # --- 回复方式 ---
@@ -1085,6 +1121,95 @@ async def _load_quoted_message(
     return sender or "某人", summary, url
 
 
+_RE_LINK_URL = re.compile(r"https?://[^\s\"'<>\\]+", re.IGNORECASE)
+_LOW_VALUE_LINK_HOSTS = (
+    "multimedia.nt.qq.com.cn",
+    "gchat.qpic.cn",
+    "qq.ugcimg.cn",
+    "miniapp.gtimg.cn",
+    "m.q.qq.com",
+    "i0.hdslb.com",
+    "i1.hdslb.com",
+    "i2.hdslb.com",
+)
+_LINK_REFERENCE_WORDS = (
+    "看评论",
+    "评论区",
+    "这个链接",
+    "这个视频",
+    "看看这个",
+    "上面的链接",
+    "刚才那个",
+    "刚才的链接",
+)
+
+
+def _is_low_value_link(url: str) -> bool:
+    host = urllib.parse.urlparse(url).netloc.lower()
+    return any(host == item or host.endswith(f".{item}") for item in _LOW_VALUE_LINK_HOSTS)
+
+
+def _record_recent_links(
+    chat_key: str,
+    raw_text: str,
+    user_id: str,
+    nickname: str,
+    msg_id: str,
+) -> None:
+    source = str(raw_text or "").replace("\\/", "/")
+    raw_urls = _RE_LINK_URL.findall(source)
+    if not raw_urls:
+        return
+    links = _RECENT_LINKS.setdefault(chat_key, deque(maxlen=16))
+    now = _now()
+    seen: Set[str] = set()
+    for raw_url in raw_urls:
+        url = _normalize_quoted_url(raw_url.rstrip(".,;，。)]}"))
+        if not url.startswith("http") or _is_low_value_link(url) or url in seen:
+            continue
+        seen.add(url)
+        kept = [item for item in links if item.get("url") != url]
+        links.clear()
+        links.extend(kept)
+        title_text = source.replace(raw_url, "")
+        for pattern in (
+            r'"标题"\s*:\s*"([^"]+)"',
+            r'"desc"\s*:\s*"([^"]+)"',
+            r'"prompt"\s*:\s*"([^"]+)"',
+        ):
+            match = re.search(pattern, title_text)
+            if match:
+                title_text = match.group(1)
+                break
+        if title_text.lstrip().startswith(("{", "[")):
+            title_text = ""
+        links.append(
+            {
+                "ts": now,
+                "url": url,
+                "sender_id": str(user_id or ""),
+                "nickname": nickname or "",
+                "msg_id": str(msg_id or ""),
+                "title": _clip_text(title_text, 100),
+            }
+        )
+
+
+def _get_recent_links(chat_key: str) -> List[Dict[str, Any]]:
+    links = _RECENT_LINKS.get(chat_key)
+    if not links:
+        return []
+    now = _now()
+    max_age = max(1, int(config.link_context_max_age_minutes)) * 60
+    fresh = [item for item in links if now - float(item.get("ts") or 0) <= max_age]
+    return fresh[-max(1, int(config.link_context_limit)):]
+
+
+def _is_explicit_link_reference(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return any(word in lowered for word in _LINK_REFERENCE_WORDS)
+
+
 # ============================================================
 # 3. 本群档案模型
 # ============================================================
@@ -1149,7 +1274,9 @@ _PROCESSED_MSG_IDS: Set[str] = set()
 _GROUP_ACTIVITY: Dict[str, Deque[float]] = {}
 _LAST_INBOUND_TS: Dict[str, float] = {}
 _LAST_INBOUND_MSG_ID: Dict[str, Tuple[float, str]] = {}
+_LAST_INBOUND_TEXT: Dict[str, str] = {}
 _RECENT_SENT: Dict[str, Deque[str]] = {}
+_RECENT_LINKS: Dict[str, Deque[Dict[str, Any]]] = {}
 _SEND_LOCKS: Dict[str, asyncio.Lock] = {}
 _BG_TASKS: Dict[str, asyncio.Task] = {}
 _LAST_MEDIA_SENT: Dict[str, float] = {}
@@ -2202,6 +2329,8 @@ if NONEBOT_AVAILABLE:
             if sender is not None:
                 nickname = str(getattr(sender, "card", "") or getattr(sender, "nickname", "") or "")
 
+            _LAST_INBOUND_TEXT[chat_key] = raw_msg
+            _record_recent_links(chat_key, raw_msg, str(user_id), nickname, msg_id_str)
             await _touch_user_state(chat_key, str(user_id), raw_msg, nickname)
             _ensure_background_loop(chat_key)
 
@@ -2847,7 +2976,7 @@ async def human_fetch(_ctx: AgentCtx, url: str, max_chars: int | None = None) ->
     Returns:
         str: 网页标题和 Markdown 正文；失败时返回明确错误。
     """
-    if not config.human_search_enabled:
+    if not config.human_fetch_enabled:
         return "联网抓取已关闭。"
     url = (url or "").strip()
     if len(url) > 8192:
@@ -2920,8 +3049,33 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
         trigger_sender = str(cache.get("sender_id") or "").strip()
         trigger_msg_id = str(cache.get("msg_id") or "").strip()
         quoted_message = await _load_quoted_message(chat_key, trigger_msg_id)
-        if quoted_message and quoted_message[2]:
-            _log("info", f"引用消息链接: {quoted_message[2]}")
+        quoted_url = quoted_message[2] if quoted_message else ""
+        link_fetch_mode = ""
+        link_fetch_allow = False
+        recent_link_items: List[Dict[str, Any]] = []
+        link_fetch_roll = random.random()
+        if cfg.human_fetch_enabled:
+            if quoted_url:
+                link_fetch_mode = "quoted"
+                link_fetch_allow = bool(cfg.quoted_link_always_fetch) or (
+                    link_fetch_roll < cfg.link_fetch_probability
+                )
+            elif cfg.link_fetch_enabled:
+                recent_link_items = _get_recent_links(chat_key)
+                if recent_link_items:
+                    explicit_reference = _is_explicit_link_reference(_LAST_INBOUND_TEXT.get(chat_key, ""))
+                    link_fetch_mode = "explicit" if explicit_reference else "vague"
+                    link_fetch_allow = explicit_reference or (
+                        link_fetch_roll < cfg.link_fetch_probability
+                    )
+            if quoted_url:
+                _log("info", f"引用消息链接: {quoted_url}")
+            if link_fetch_mode:
+                _log(
+                    "info",
+                    f"链接抓取判定: mode={link_fetch_mode} allow={link_fetch_allow} "
+                    f"roll={link_fetch_roll:.3f} p={cfg.link_fetch_probability:.2f} chat={chat_key}",
+                )
 
         group_profile = _load_group_profile(chat_key)
         profile_role = "auto"
@@ -3003,8 +3157,32 @@ send_msg_text(_ck, "内容")
                     "· 用户说「这个/这条/这个视频/评论」时，默认指这条引用消息；"
                     "需要抓取时只用这个引用链接，不要改用上下文里其它链接。"
                 )
+                if not cfg.human_fetch_enabled:
+                    lines.append("· human_fetch 已关闭：不要调用网页抓取，只根据已有信息回答。")
+                elif link_fetch_allow:
+                    lines.append("· 这是明确引用：允许抓取；如果与当前回复相关，调用 human_fetch。")
+                else:
+                    lines.append("· 本轮不自动抓取引用链接；除非用户明确要求，否则不要调用 human_fetch。")
             else:
                 lines.append("· 这条引用消息没有可用链接；不要拿上下文里其它链接代替。")
+
+        if link_fetch_mode in ("explicit", "vague") and recent_link_items:
+            if link_fetch_allow:
+                lines.append("======【最近链接】======")
+                for index, item in enumerate(recent_link_items, start=1):
+                    ts = datetime.fromtimestamp(float(item.get("ts") or 0)).strftime("%H:%M")
+                    nickname = _clip_text(item.get("nickname"), 40) or "群友"
+                    title = _clip_text(item.get("title"), 80)
+                    url = str(item.get("url") or "")
+                    suffix = f"「{title}」" if title else ""
+                    lines.append(f"{index}. {nickname} {ts} {suffix} {url}")
+                lines.append(
+                    "· 本轮允许自动抓取：如果当前回复与其中某个链接明确相关，调用 human_fetch；"
+                    "无关不要抓。"
+                )
+                lines.append("· 多个候选分不清时先问用户是哪一个，不要随便选。")
+            else:
+                lines.append("· 本轮不自动抓取上下文链接；除非用户明确要求看链接/评论，否则不要调用 human_fetch。")
 
         lines.append("======【拟人状态】======")
         lines.append(
@@ -3174,22 +3352,29 @@ send_msg_text(_ck, "内容")
             lines.append(
                 "· 搜索结果只作依据：用自然语言概括 1~2 条最相关信息，附上 URL；不要整段粘贴搜索结果，不要暴露内部字段。"
             )
-            lines.append(
-                "· 摘要不够时再调用 `human_fetch(url)` 看正文；每轮最多 1 次 `human_search`、最多 2 次 `human_fetch`。"
-            )
-            if cfg.bili_comments_enabled:
+            if cfg.human_fetch_enabled:
                 lines.append(
-                    "· 遇到 B 站视频链接，`human_fetch` 会自动附带热门评论；用户问评论区时优先调用它，不要回答看不到评论。"
+                    "· 摘要不够时再调用 `human_fetch(url)` 看正文；每轮最多 1 次 `human_search`、最多 2 次 `human_fetch`。"
                 )
-                lines.append(
-                    "· 评论只作参考：概括主要观点，不要逐条复读，也不要把评论当事实。"
-                )
+                if cfg.bili_comments_enabled:
+                    lines.append(
+                        "· 遇到 B 站视频链接，`human_fetch` 会自动附带热门评论；用户问评论区时优先调用它，不要回答看不到评论。"
+                    )
+                    lines.append(
+                        "· 评论只作参考：概括主要观点，不要逐条复读，也不要把评论当事实。"
+                    )
+            else:
+                lines.append("· human_fetch 已关闭：不要调用网页抓取，只根据搜索结果摘要回答。")
             lines.append(
                 "· 搜索失败、无结果或 Key 未配置时，直接说查不到或暂时无法联网，不要凭记忆编造实时信息。"
             )
             lines.append("· 日常闲聊、已有把握的常识、代码问题不要搜；不要为了显得勤奋而搜。")
         else:
             lines.append("· 联网搜索已关闭；需要实时信息时直接说明无法查询，不要编造。")
+            if cfg.human_fetch_enabled:
+                lines.append("· human_fetch 仍可用：只在用户明确给出或引用链接时使用，不要调用 human_search。")
+            else:
+                lines.append("· human_fetch 也已关闭：不要调用任何联网工具。")
 
         if cfg.enable_memory:
             lines.append(
@@ -3384,7 +3569,9 @@ async def clean_up() -> str:
     _GROUP_ACTIVITY.clear()
     _LAST_INBOUND_TS.clear()
     _LAST_INBOUND_MSG_ID.clear()
+    _LAST_INBOUND_TEXT.clear()
     _RECENT_SENT.clear()
+    _RECENT_LINKS.clear()
     _SEND_LOCKS.clear()
     _LAST_MEDIA_SENT.clear()
     _LAST_STICKER_HINT.clear()
