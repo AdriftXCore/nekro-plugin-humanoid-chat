@@ -73,7 +73,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.3.0",
+    version="3.3.1",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -1006,6 +1006,83 @@ def _format_bili_fetch(
     if len(result) > max_chars:
         result = result[:max_chars].rstrip() + "\n\n...(已截断)"
     return result
+
+
+def _normalize_quoted_url(value: Any) -> str:
+    url = str(value or "").strip()
+    if not url:
+        return ""
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    if host == "b23.tv" or host.endswith(".b23.tv"):
+        path = parsed.path.strip("/")
+        return f"https://b23.tv/{path}" if path else url
+    if host == "bilibili.com" or host.endswith(".bilibili.com"):
+        match = _RE_BILI_BVID.search(url)
+        if match:
+            return f"https://www.bilibili.com/video/{match.group(1)}/"
+    return url
+
+
+def _quoted_message_info(message: DBChatMessage) -> Tuple[str, str]:
+    summary = str(message.content_text or "").strip()
+    urls: List[str] = []
+    try:
+        content_data = json.loads(message.content_data or "[]")
+    except Exception:
+        content_data = []
+    if isinstance(content_data, list):
+        for segment in content_data:
+            if not isinstance(segment, dict):
+                continue
+            desc = str(segment.get("card_desc") or "").strip()
+            if desc:
+                summary = desc
+            card_url = str(segment.get("card_url") or "").strip()
+            if card_url:
+                urls.append(card_url)
+            json_data = segment.get("json_data")
+            if isinstance(json_data, dict):
+                meta = json_data.get("meta")
+                if isinstance(meta, dict):
+                    detail = meta.get("detail_1")
+                    if isinstance(detail, dict):
+                        for key in ("qqdocurl", "url"):
+                            value = str(detail.get(key) or "").strip()
+                            if value:
+                                urls.append(value)
+    if not urls:
+        urls.extend(re.findall(r"https?://[^\s\"'<>]+", summary))
+    normalized = [_normalize_quoted_url(url) for url in urls if url]
+    bili_urls = [url for url in normalized if _is_bilibili_url(url)]
+    chosen = bili_urls[0] if bili_urls else (normalized[0] if normalized else "")
+    return _clip_text(summary, 400), chosen
+
+
+async def _load_quoted_message(
+    chat_key: str,
+    trigger_msg_id: str,
+) -> Optional[Tuple[str, str, str]]:
+    if not chat_key or not trigger_msg_id:
+        return None
+    current = await DBChatMessage.filter(
+        chat_key=chat_key,
+        message_id=str(trigger_msg_id),
+    ).order_by("-id").first()
+    if not current:
+        return None
+    ref_id = str(getattr(current.ext_data_obj, "ref_msg_id", "") or "").strip()
+    if not ref_id:
+        return None
+    quoted = await DBChatMessage.filter(
+        chat_key=chat_key,
+        message_id=ref_id,
+    ).order_by("-id").first()
+    if not quoted:
+        return None
+    summary, url = _quoted_message_info(quoted)
+    sender = str(quoted.sender_nickname or quoted.sender_name or "").strip()
+    return sender or "某人", summary, url
 
 
 # ============================================================
@@ -2842,6 +2919,9 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
         mention_type = cache.get("mention_type")
         trigger_sender = str(cache.get("sender_id") or "").strip()
         trigger_msg_id = str(cache.get("msg_id") or "").strip()
+        quoted_message = await _load_quoted_message(chat_key, trigger_msg_id)
+        if quoted_message and quoted_message[2]:
+            _log("info", f"引用消息链接: {quoted_message[2]}")
 
         group_profile = _load_group_profile(chat_key)
         profile_role = "auto"
@@ -2911,6 +2991,21 @@ send_msg_file(_ck, "/app/uploads/x.jpg")
 send_msg_text(_ck, "内容")
 """.strip().splitlines(),
         )
+        if quoted_message:
+            quoted_sender, quoted_summary, quoted_url = quoted_message
+            lines.append("======【引用消息】======")
+            lines.append(f"· 对方引用了「{quoted_sender}」的消息：")
+            if quoted_summary:
+                lines.append(f"  「{quoted_summary}」")
+            if quoted_url:
+                lines.append(f"· 引用链接：{quoted_url}")
+                lines.append(
+                    "· 用户说「这个/这条/这个视频/评论」时，默认指这条引用消息；"
+                    "需要抓取时只用这个引用链接，不要改用上下文里其它链接。"
+                )
+            else:
+                lines.append("· 这条引用消息没有可用链接；不要拿上下文里其它链接代替。")
+
         lines.append("======【拟人状态】======")
         lines.append(
             f"现在 {now_local.strftime('%H:%M')}（{period}）。心情 {valence}/100，精力 {energy}/100，耐心 {patience}/100。"
