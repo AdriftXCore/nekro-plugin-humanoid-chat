@@ -73,7 +73,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.4.3",
+    version="3.4.4",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -1134,11 +1134,6 @@ def _quoted_no_link_reply(summary: str) -> str:
     if title:
         return f"你引用的是「{title}」，没有链接内容，我不确定你指什么。"
     return "你引用的消息没有链接内容，我不确定你指什么。"
-
-
-def _is_short_quote_question(text: str) -> bool:
-    value = str(text or "").strip()
-    return any(word in value for word in ("这个是什么", "这是什么", "这个是啥", "这是啥", "这个呢", "看看这个", "这啥"))
 
 
 async def _load_quoted_message(
@@ -2558,8 +2553,11 @@ async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSig
         chat_type = str(getattr(chat_message, "chat_type", "") or "")
         is_tome = bool(getattr(chat_message, "is_tome", False))
         content_text = str(getattr(chat_message, "content_text", "") or "")
-        quote_question = _is_short_quote_question(content_text)
-        if chat_key and (is_tome or "private" in chat_key or chat_type == "private" or quote_question):
+        bot_names = await _get_bot_names_for_chat(chat_key, _ctx) if chat_key else set()
+        bot_names |= set(_split_csv(config.extra_bot_names))
+        content_lower = content_text.lower()
+        bot_called = any(name and name.lower() in content_lower for name in bot_names)
+        if chat_key and (is_tome or "private" in chat_key or chat_type == "private" or bot_called):
             ext_data = getattr(chat_message, "ext_data", {}) or {}
             ref_msg_id = str(ext_data.get("ref_msg_id") or "").strip() if isinstance(ext_data, dict) else ""
             if ref_msg_id:
