@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.8.0 - 2026-11-03
+
+- 新增每天随机自动发 QQ 空间：默认 `09:00~23:00` 窗口内随机一次，当天只发 1 条。
+- 内容使用 Nekro 默认人设（`AI_CHAT_DEFAULT_PRESET_ID`，当前为 KONA）通过默认模型组生成，不绑定某个群或私聊。
+- 当天已通过 `human_qzone_publish` 发过说说时自动跳过；重启后通过 `plugin.store` 保留当天目标时间，不重复发。
+- 离线恢复支持最多 30 分钟补发；窗口结束、生成 `EMPTY`、内容过长或发布失败时当天跳过，失败最多重试 1 次。
+- 新增 `qzone_daily_enabled`、`qzone_daily_window_start`、`qzone_daily_window_end`、`qzone_daily_catchup_minutes`、`qzone_daily_max_chars`、`qzone_daily_themes` 配置。
+- 版本升至 `3.8.0`。
+
 ## 3.7.0 - 2026-11-02
 
 - 新增 `human_qzone_publish`：通过 NapCat `send_qzone_msg` 发布 QQ 空间说说，支持文字和最多 9 张图片。

@@ -121,6 +121,12 @@ qzone_max_images: 9
 qzone_proactive_enabled: true
 qzone_cooldown_minutes: 360
 qzone_max_per_day: 1
+qzone_daily_enabled: true
+qzone_daily_window_start: "09:00"
+qzone_daily_window_end: "23:00"
+qzone_daily_catchup_minutes: 30
+qzone_daily_max_chars: 150
+qzone_daily_themes: "最近生活,兴趣,心情,游戏,动漫,吃的"
 follow_trigger_reply_style: true
 at_first_reply_plain: true
 quote_at_first_reply_quote_at: true

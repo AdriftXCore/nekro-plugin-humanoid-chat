@@ -205,6 +205,12 @@
 | `qzone_proactive_enabled` | `True` | 【QQ空间】允许 AI 主动发说说。 |
 | `qzone_cooldown_minutes` | `360` | 【QQ空间】两次发布的最小间隔。 |
 | `qzone_max_per_day` | `1` | 【QQ空间】每日发布上限；0 表示不限制。 |
+| `qzone_daily_enabled` | `True` | 【QQ空间】每天在时间窗口内随机选一个时间，用 Nekro 默认人设生成并发布一条说说。 |
+| `qzone_daily_window_start` | `09:00` | 【QQ空间】每日随机窗口开始，格式 `HH:MM`。 |
+| `qzone_daily_window_end` | `23:00` | 【QQ空间】每日随机窗口结束，格式 `HH:MM`；超过后不补发。 |
+| `qzone_daily_catchup_minutes` | `30` | 【QQ空间】到点后机器人离线，恢复后最多补发多少分钟；`0` 表示不补发。 |
+| `qzone_daily_max_chars` | `150` | 【QQ空间】AI 生成的每日说说最大字符数，超出则跳过。 |
+| `qzone_daily_themes` | `最近生活,兴趣,心情,游戏,动漫,吃的` | 【QQ空间】逗号分隔的主题池，每次随机选一个给 AI 参考。 |
 
 ### 回复方式
 

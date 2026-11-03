@@ -3,7 +3,7 @@
 一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
 > 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.7.0`
+> 当前版本：`3.8.0`
 > 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
 > 主要适配：OneBot V11 / NapCat（QQ）
 
@@ -72,6 +72,7 @@
   - 提供 `human_qzone_publish(content, images, ugc_right)`
   - 通过 NapCat `send_qzone_msg` 发布，支持文字和最多 9 张图片
   - 默认所有人可见；可主动发，但有冷却和每日上限
+  - 支持每天 `09:00~23:00` 随机自动发一条：读取 Nekro 默认人设生成，当天已通过插件发过则跳过
   - 不发聊天记录、他人隐私、联系方式、住址、定位
 - **长期记忆协作**
   - 不重复维护好感度分数；长期好感度由「好感度系统」负责
@@ -509,6 +510,12 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `qzone_proactive_enabled` | 是否允许主动发空间 |
 | `qzone_cooldown_minutes` | 发布冷却，默认 360 分钟 |
 | `qzone_max_per_day` | 每日发布上限，默认 1 条 |
+| `qzone_daily_enabled` | 是否每天随机自动发一条说说 |
+| `qzone_daily_window_start` | 每日随机窗口开始，默认 `09:00` |
+| `qzone_daily_window_end` | 每日随机窗口结束，默认 `23:00` |
+| `qzone_daily_catchup_minutes` | 离线恢复后的补发窗口，默认 30 分钟 |
+| `qzone_daily_max_chars` | 每日说说最大字符数，默认 150 |
+| `qzone_daily_themes` | 每日说说主题池，逗号分隔 |
 | `debug_log` | 详细日志；排查时临时开启 |
 
 > `config.yaml` 是当前生产配置参考，可能包含环境相关值；如果后续加入密钥，请改用环境变量或不要提交。

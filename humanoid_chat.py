@@ -74,7 +74,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.7.0",
+    version="3.8.0",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -842,6 +842,40 @@ class HumanoidConfig(ConfigBase):
         ge=0,
         title="【QQ空间】每日发布上限",
         description="每天最多发几条；0 表示不限制。",
+    )
+    qzone_daily_enabled: bool = Field(
+        default=True,
+        title="【QQ空间】每日随机自动发",
+        description="每天在设定时间窗口内随机选一个时间，自动用默认人设生成并发布一条说说。",
+    )
+    qzone_daily_window_start: str = Field(
+        default="09:00",
+        title="【QQ空间】每日随机窗口开始",
+        description="格式 HH:MM；窗口内随机选一个时间点。",
+    )
+    qzone_daily_window_end: str = Field(
+        default="23:00",
+        title="【QQ空间】每日随机窗口结束",
+        description="格式 HH:MM；超过该时间不再补发。",
+    )
+    qzone_daily_catchup_minutes: int = Field(
+        default=30,
+        ge=0,
+        le=720,
+        title="【QQ空间】每日任务补发窗口（分钟）",
+        description="到点后如果机器人离线，恢复后最多补发多少分钟；0 表示不补发。",
+    )
+    qzone_daily_max_chars: int = Field(
+        default=150,
+        ge=1,
+        le=1000,
+        title="【QQ空间】每日说说最大字符数",
+        description="AI 生成的每日说说超过该长度时跳过，避免长篇大论。",
+    )
+    qzone_daily_themes: str = Field(
+        default="最近生活,兴趣,心情,游戏,动漫,吃的",
+        title="【QQ空间】每日说说主题池",
+        description="逗号分隔；每次随机选一个作为 AI 生成说说的主题参考。",
     )
 
     # --- 回复方式 ---
@@ -1743,6 +1777,7 @@ GroupProfile.model_rebuild(force=True)
 STORE_CHAT_STATE = "humanoid_state"
 STORE_USER_STATE = "humanoid_user_state"
 STORE_LOOP_STATUS = "humanoid_loop_status"
+STORE_QZONE_SCHEDULE = "qzone_schedule"
 
 _TRIGGER_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOT_NAMES_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -1757,6 +1792,7 @@ _RECENT_LINKS: Dict[str, Deque[Dict[str, Any]]] = {}
 _LAST_RED_PACKET: Dict[str, Dict[str, Any]] = {}
 _SEND_LOCKS: Dict[str, asyncio.Lock] = {}
 _BG_TASKS: Dict[str, asyncio.Task] = {}
+_QZONE_DAILY_TASK: Optional[asyncio.Task] = None
 _LAST_MEDIA_SENT: Dict[str, float] = {}
 _LAST_STICKER_HINT: Dict[str, float] = {}
 _GROUP_PROFILE_CACHE: Dict[str, Tuple[float, GroupProfile]] = {}
@@ -3755,27 +3791,13 @@ async def human_bangumi_calendar(
     return _format_bangumi_calendar(day, items[:count])
 
 
-@plugin.mount_sandbox_method(
-    SandboxMethodType.AGENT,
-    "human_qzone_publish",
-    "发布 QQ 空间说说，支持文字和图片",
-)
-async def human_qzone_publish(
-    _ctx: AgentCtx,
+async def _publish_qzone_content(
+    bot: Any,
     content: str,
     images: List[str] | None = None,
     ugc_right: int | None = None,
+    source: str = "manual",
 ) -> str:
-    """发布 QQ 空间说说。
-
-    Args:
-        content (str): 说说正文，用符合人设的自然口吻。
-        images (List[str] | None): 图片路径、HTTP URL 或 base64 列表，最多 9 张。
-        ugc_right (int | None): 可见范围；留空使用配置。1 所有人，4 好友，16 部分好友，64 仅自己，128 部分好友不可见。
-
-    Returns:
-        str: 发布结果；失败时返回明确错误。
-    """
     if not config.qzone_enabled:
         return "QQ空间发布已关闭。"
     content = (content or "").strip()
@@ -3810,20 +3832,309 @@ async def human_qzone_publish(
     except ValueError as exc:
         return f"图片处理失败：{exc}"
     try:
-        bot = await _ctx.get_onebot_v11_bot()
         payload: Dict[str, Any] = {"content": content, "ugc_right": right}
         if prepared_images:
             payload["images"] = prepared_images
-        result = await bot.call_api("send_qzone_msg", **payload)
+        await bot.call_api("send_qzone_msg", **payload)
     except Exception as exc:
-        _log("warning", f"QQ空间发布失败: {type(exc).__name__}: {exc}")
+        _log("warning", f"QQ空间发布失败({source}): {type(exc).__name__}: {exc}")
         return f"QQ空间发布失败：{type(exc).__name__}: {exc}"
     state["count"] = count + 1
     state["last_post"] = now
     state["date"] = today
     await _store_set_dict(state, chat_key="qzone", store_key="qzone_state")
-    _log("info", f"QQ空间发布成功: count={state['count']} ugc_right={right} images={len(prepared_images)}")
+    _log("info", f"QQ空间发布成功({source}): count={state['count']} ugc_right={right} images={len(prepared_images)}")
     return "已发布 QQ 空间说说。"
+
+
+@plugin.mount_sandbox_method(
+    SandboxMethodType.AGENT,
+    "human_qzone_publish",
+    "发布 QQ 空间说说，支持文字和图片",
+)
+async def human_qzone_publish(
+    _ctx: AgentCtx,
+    content: str,
+    images: List[str] | None = None,
+    ugc_right: int | None = None,
+) -> str:
+    """发布 QQ 空间说说。
+
+    Args:
+        content (str): 说说正文，用符合人设的自然口吻。
+        images (List[str] | None): 图片路径、HTTP URL 或 base64 列表，最多 9 张。
+        ugc_right (int | None): 可见范围；留空使用配置。1 所有人，4 好友，16 部分好友，64 仅自己，128 部分好友不可见。
+
+    Returns:
+        str: 发布结果；失败时返回明确错误。
+    """
+    try:
+        bot = await _ctx.get_onebot_v11_bot()
+    except Exception as exc:
+        _log("warning", f"QQ空间获取 bot 失败: {type(exc).__name__}: {exc}")
+        return f"QQ空间发布失败：{type(exc).__name__}: {exc}"
+    return await _publish_qzone_content(bot, content, images, ugc_right, source="manual")
+
+
+def _qzone_parse_hhmm(value: str, fallback: str) -> int:
+    for raw in (value, fallback):
+        try:
+            hour_text, minute_text = str(raw).strip().split(":", 1)
+            hour = int(hour_text)
+            minute = int(minute_text)
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                return hour * 60 + minute
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def _qzone_daily_window(now_local: datetime) -> Tuple[datetime, datetime] | None:
+    start_minute = _qzone_parse_hhmm(config.qzone_daily_window_start, "09:00")
+    end_minute = _qzone_parse_hhmm(config.qzone_daily_window_end, "23:00")
+    if end_minute <= start_minute:
+        return None
+    start = now_local.replace(hour=start_minute // 60, minute=start_minute % 60, second=0, microsecond=0)
+    end = now_local.replace(hour=end_minute // 60, minute=end_minute % 60, second=0, microsecond=0)
+    return start, end
+
+
+def _qzone_daily_themes() -> List[str]:
+    return [item.strip() for item in str(config.qzone_daily_themes or "").split(",") if item.strip()]
+
+
+def _clean_qzone_generated_text(text: str) -> str:
+    value = (text or "").strip()
+    if not value:
+        return ""
+    if value.upper().startswith("EMPTY"):
+        return ""
+    value = value.strip("` \t")
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    value = " ".join(lines)
+    value = value.strip("\"'“”‘’「」『』 ")
+    for prefix in ("说说：", "说说:", "QQ空间：", "QQ空间:"):
+        if value.startswith(prefix):
+            value = value[len(prefix):].strip()
+    return value
+
+
+async def _qzone_generate_daily_content() -> str:
+    try:
+        from nekro_agent.core.config import config as core_config
+        from nekro_agent.models.db_preset import DBPreset
+        from nekro_agent.services.agent.creator import OpenAIChatMessage
+        from nekro_agent.services.agent.openai import gen_openai_chat_response
+        from nekro_agent.services.preset_service import DEFAULT_PRESET_CONTENT
+    except Exception as exc:
+        _log("warning", f"QQ空间每日任务: 导入生成依赖失败: {type(exc).__name__}: {exc}")
+        return ""
+
+    preset_id = getattr(core_config, "AI_CHAT_DEFAULT_PRESET_ID", None)
+    preset = await DBPreset.get_or_none(id=preset_id) if preset_id else None
+    system_prompt = (getattr(preset, "content", "") or DEFAULT_PRESET_CONTENT).strip()
+    preset_name = getattr(preset, "name", "默认人设") if preset else "默认人设"
+
+    group_name = getattr(core_config, "USE_MODEL_GROUP", "default")
+    model_group = core_config.MODEL_GROUPS.get(group_name)
+    if model_group is None:
+        _log("warning", f"QQ空间每日任务: 模型组 {group_name} 不存在")
+        return ""
+    if getattr(model_group, "MODEL_TYPE", "chat") != "chat":
+        _log("warning", f"QQ空间每日任务: 模型组 {group_name} 不是聊天模型")
+        return ""
+    if not getattr(model_group, "CHAT_MODEL", ""):
+        _log("warning", f"QQ空间每日任务: 模型组 {group_name} 未配置 CHAT_MODEL")
+        return ""
+
+    themes = _qzone_daily_themes()
+    theme = random.choice(themes) if themes else "最近的生活"
+    user_prompt = (
+        "现在是你的私人时间，不用回复任何人。"
+        f"请以「{preset_name}」这个身份，写一条 QQ 空间说说，主题参考：{theme}。\n"
+        "要求：\n"
+        "- 1~2 句，像真人在生活里随手发的，不要总结、不要客服腔、不要营销号腔\n"
+        "- 不暴露 AI 身份，不写聊天记录、群聊内容、他人隐私、联系方式、住址、定位\n"
+        "- 只输出说说正文，不要标题、引号、前缀或解释\n"
+        "- 如果确实没什么想发，只输出 EMPTY"
+    )
+    try:
+        response = await gen_openai_chat_response(
+            model=getattr(model_group, "CHAT_MODEL", ""),
+            messages=[
+                OpenAIChatMessage.from_text("system", system_prompt),
+                OpenAIChatMessage.from_text("user", user_prompt),
+            ],
+            base_url=getattr(model_group, "BASE_URL", None),
+            api_key=getattr(model_group, "API_KEY", None),
+            proxy_url=getattr(model_group, "CHAT_PROXY", None) or None,
+            max_tokens=256,
+            max_wait_time=60,
+        )
+    except Exception as exc:
+        _log("warning", f"QQ空间每日任务: 生成失败: {type(exc).__name__}: {exc}")
+        return ""
+
+    content = _clean_qzone_generated_text(getattr(response, "response_content", "") or "")
+    if not content:
+        _log("info", f"QQ空间每日任务: {preset_name} 返回 EMPTY，今天跳过")
+        return ""
+    if len(content) > config.qzone_daily_max_chars:
+        _log("info", f"QQ空间每日任务: 生成内容过长({len(content)}字)，今天跳过")
+        return ""
+    _log("info", f"QQ空间每日任务: 生成内容({preset_name}, {len(content)}字)={content}")
+    return content
+
+
+async def _qzone_daily_state() -> Dict[str, Any]:
+    return await _store_get_dict(chat_key="qzone", store_key=STORE_QZONE_SCHEDULE)
+
+
+async def _qzone_daily_mark(state: Dict[str, Any], status: str, reason: str = "") -> None:
+    state["status"] = status
+    state["reason"] = reason
+    state["updated_at"] = _now()
+    await _store_set_dict(state, chat_key="qzone", store_key=STORE_QZONE_SCHEDULE)
+    _log("info", f"QQ空间每日任务: 状态={status} reason={reason or '-'}")
+
+
+async def _qzone_daily_tick() -> None:
+    now_local = _local_now()
+    today = _today_str()
+    state = await _qzone_daily_state()
+
+    if state.get("date") != today:
+        bounds = _qzone_daily_window(now_local)
+        if bounds is None:
+            state = {"date": today, "status": "skipped", "reason": "invalid_window", "updated_at": _now()}
+            await _store_set_dict(state, chat_key="qzone", store_key=STORE_QZONE_SCHEDULE)
+            _log("warning", "QQ空间每日任务: 时间窗口无效，今天跳过")
+            return
+        start, end = bounds
+        now_ts = now_local.timestamp()
+        start_ts = start.timestamp()
+        end_ts = end.timestamp()
+        if now_ts >= end_ts:
+            state = {"date": today, "status": "skipped", "reason": "window_over", "updated_at": _now()}
+            await _store_set_dict(state, chat_key="qzone", store_key=STORE_QZONE_SCHEDULE)
+            _log("info", "QQ空间每日任务: 今天时间窗口已过，跳过")
+            return
+        earliest = max(start_ts, now_ts + 30)
+        if earliest >= end_ts:
+            state = {"date": today, "status": "skipped", "reason": "window_too_late", "updated_at": _now()}
+            await _store_set_dict(state, chat_key="qzone", store_key=STORE_QZONE_SCHEDULE)
+            _log("info", "QQ空间每日任务: 剩余窗口太短，今天跳过")
+            return
+        target_ts = random.uniform(earliest, end_ts)
+        state = {
+            "date": today,
+            "target_ts": target_ts,
+            "status": "pending",
+            "attempts": 0,
+            "updated_at": _now(),
+        }
+        await _store_set_dict(state, chat_key="qzone", store_key=STORE_QZONE_SCHEDULE)
+        target_text = datetime.fromtimestamp(target_ts, tz=now_local.tzinfo).strftime("%H:%M")
+        _log("info", f"QQ空间每日任务: 今天随机时间={target_text}")
+        return
+
+    if state.get("status") != "pending":
+        return
+
+    target_ts = float(state.get("target_ts") or 0)
+    if target_ts <= 0:
+        await _qzone_daily_mark(state, "skipped", "missing_target")
+        return
+    now_ts = now_local.timestamp()
+    if now_ts < target_ts:
+        return
+
+    bounds = _qzone_daily_window(now_local)
+    if bounds is None:
+        await _qzone_daily_mark(state, "skipped", "invalid_window")
+        return
+    _, end = bounds
+    if now_ts > end.timestamp():
+        await _qzone_daily_mark(state, "skipped", "window_over")
+        return
+    if config.qzone_daily_catchup_minutes <= 0 or now_ts - target_ts > config.qzone_daily_catchup_minutes * 60:
+        await _qzone_daily_mark(state, "skipped", "catchup_expired")
+        return
+
+    qzone_state = await _store_get_dict(chat_key="qzone", store_key="qzone_state")
+    if qzone_state.get("date") == today and int(qzone_state.get("count") or 0) > 0:
+        await _qzone_daily_mark(state, "skipped", "already_posted")
+        return
+
+    content = await _qzone_generate_daily_content()
+    if not content:
+        await _qzone_daily_mark(state, "skipped", "empty_or_generation_failed")
+        return
+
+    try:
+        from nekro_agent.adapters.onebot_v11.core.bot import get_bot
+
+        bot = get_bot()
+        if bot is None:
+            raise RuntimeError("OneBot bot 未连接")
+    except Exception as exc:
+        attempts = int(state.get("attempts") or 0) + 1
+        state["attempts"] = attempts
+        if attempts >= 2:
+            await _qzone_daily_mark(state, "failed", f"bot_unavailable: {type(exc).__name__}")
+        else:
+            await _store_set_dict(state, chat_key="qzone", store_key=STORE_QZONE_SCHEDULE)
+            _log("warning", f"QQ空间每日任务: 获取 bot 失败，稍后重试: {type(exc).__name__}: {exc}")
+        return
+
+    result = await _publish_qzone_content(
+        bot,
+        content,
+        None,
+        config.qzone_default_ugc_right,
+        source="daily",
+    )
+    if result.startswith("已发布"):
+        await _qzone_daily_mark(state, "posted", "success")
+        return
+    if "已经发过" in result or "每日上限" in result or "还没到下次" in result:
+        await _qzone_daily_mark(state, "skipped", "quota_or_cooldown")
+        return
+    attempts = int(state.get("attempts") or 0) + 1
+    state["attempts"] = attempts
+    if attempts >= 2:
+        await _qzone_daily_mark(state, "failed", result[:120])
+    else:
+        await _store_set_dict(state, chat_key="qzone", store_key=STORE_QZONE_SCHEDULE)
+        _log("warning", f"QQ空间每日任务: 发布失败，稍后重试: {result}")
+
+
+async def _qzone_daily_loop() -> None:
+    await asyncio.sleep(20)
+    while True:
+        try:
+            if config.qzone_enabled and config.qzone_daily_enabled:
+                await _qzone_daily_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            _log("warning", f"QQ空间每日任务循环异常: {type(exc).__name__}: {exc}")
+        await asyncio.sleep(60)
+
+
+def _ensure_qzone_daily_task() -> None:
+    global _QZONE_DAILY_TASK
+    if _QZONE_DAILY_TASK and not _QZONE_DAILY_TASK.done():
+        return
+    if not config.qzone_enabled:
+        return
+    _QZONE_DAILY_TASK = asyncio.create_task(_qzone_daily_loop())
+    _log("info", "QQ空间每日任务: 后台循环已启动")
+
+
+@plugin.on_enabled()
+async def _start_qzone_daily_task() -> None:
+    _ensure_qzone_daily_task()
 
 
 # ============================================================
@@ -4432,6 +4743,10 @@ async def _proactive_tick(chat_key: str) -> None:
 
 @plugin.mount_cleanup_method()
 async def clean_up() -> str:
+    global _QZONE_DAILY_TASK
+    if _QZONE_DAILY_TASK and not _QZONE_DAILY_TASK.done():
+        _QZONE_DAILY_TASK.cancel()
+    _QZONE_DAILY_TASK = None
     for task in list(_BG_TASKS.values()):
         task.cancel()
     _BG_TASKS.clear()
