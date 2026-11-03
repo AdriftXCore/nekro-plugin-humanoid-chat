@@ -1,5 +1,23 @@
 # Changelog
 
+## 3.9.1 - 2026-11-03
+
+- `/group_learn` 改为自动应用高置信度安全候选，单次最多 3 条，默认阈值 0.85，自动有效期 14 天。
+- 未自动应用的候选按 `1/2/3` 编号输出，支持 `/group_learn_approve 1 3`、`/group_learn_approve all` 和按词批准。
+- 新增 `/group_learn_undo`：撤销最近一次自动应用批次，并把词条退回候选列表。
+- 自动应用只添加新词，不覆盖已有词；写入前仍备份群档案。
+- 新增 `group_learn_auto_apply`、`group_learn_auto_apply_min_confidence`、`group_learn_auto_apply_limit`、`group_learn_auto_ttl_days` 配置。
+- 版本升至 `3.9.1`。
+
+## 3.9.0 - 2026-11-03
+
+- 新增群黑话候选流程：`/group_learn` 扫描近期群聊并生成候选，只写入 `*.learned_terms.candidates.yaml`，不自动应用。
+- 新增 `/group_learn_approve <词>` 和 `/group_learn_reject <词>`；批准后才写入群档案的 `learned_terms`。
+- 候选提取会过滤命令、机器人、图片占位符、图片文件名、链接和随机哈希；发送者匿名化为“群友N”。
+- `learned_terms` 带置信度、证据、更新时间和过期时间；注入时只取未过期、置信度最高的前 N 条；重新生成群档案时保留已批准词条。
+- 新增 `group_learn_enabled`、`group_learn_lookback_days`、`group_learn_max_messages`、`group_learn_max_candidates`、`group_learn_min_confidence`、`group_learn_term_limit`、`group_learn_inject_limit`、`group_learn_ttl_days` 配置。
+- 版本升至 `3.9.0`。
+
 ## 3.8.0 - 2026-11-03
 
 - 新增每天随机自动发 QQ 空间：默认 `09:00~23:00` 窗口内随机一次，当天只发 1 条。

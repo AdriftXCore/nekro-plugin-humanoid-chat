@@ -3,7 +3,7 @@
 一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
 > 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.8.0`
+> 当前版本：`3.9.1`
 > 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
 > 主要适配：OneBot V11 / NapCat（QQ）
 
@@ -33,6 +33,7 @@
   - 自动识别 KONA 在群里的 `owner/admin/member` 角色
   - 可手动覆盖身份
   - 普通成员群只提醒不执法；群主/管理员群可按群规执法
+  - 可选群黑话候选：`/group_learn` 自动应用高置信度安全候选，其余编号审查，可撤销
 - **群规执法**
   - 支持提醒、撤回、禁言、撤回并禁言、撤回并踢出、只记录不执行
   - 可指定每条规则的动作和禁言时长
@@ -81,6 +82,9 @@
 - **实用命令**
   - `/force_mute <QQ[,QQ...]> [秒数]`：超级管理员强制禁言/解禁
   - `/group_profile_gen [chat_key|群号|--all]`：根据群成员和与 KONA 的直接互动生成群档案初稿
+  - `/group_learn [chat_key|群号|--all]`：生成候选并自动应用高置信度安全词条
+  - `/group_learn_approve <编号|词|all>` / `/group_learn_reject <编号|词|all>`：处理剩余候选
+  - `/group_learn_undo`：撤销最近一次自动应用并退回候选
 
 ---
 
@@ -229,6 +233,26 @@ ssh nas "docker restart nekro_agent"
 - 不依赖「群管助手」，直接调用 OneBot `set_group_ban`
 - 因此不受群管插件的 `ALLOW_GROUPS` / `PROTECTED_USERS` / `ENABLE_MUTE` 限制
 
+### `/group_learn`
+
+```text
+/group_learn                           # 当前群
+/group_learn 712127976                 # 指定群号
+/group_learn onebot_v11-group_109884934
+/group_learn --all                     # 所有 onebot 群
+```
+
+- 权限：仅超级管理员
+- 只读取最近 `group_learn_lookback_days` 天、非图片占位符、非命令、非机器人消息
+- 发送者匿名化为“群友1/群友2”，不把昵称、QQ、图片文件名交给模型
+- LLM 只输出黑话/缩写/梗/固定称呼/明确偏好候选
+- 置信度达到自动阈值的**新词**最多自动应用 `group_learn_auto_apply_limit` 条
+- 其余候选写入 `group_profiles/<chat_key>.learned_terms.candidates.yaml`，按编号审查
+- 自动应用可用 `/group_learn_undo` 撤销，撤销后词条退回候选列表
+- 批准：`/group_learn_approve 1`、`/group_learn_approve 1 3`、`/group_learn_approve 词` 或 `/group_learn_approve all`
+- 拒绝：`/group_learn_reject 1` 或 `/group_learn_reject all`
+- 写入 `<chat_key>.yaml` 的 `learned_terms` 后，按有效期和置信度注入
+
 ### `/group_profile_gen`
 
 ```text
@@ -250,6 +274,7 @@ ssh nas "docker restart nekro_agent"
   - 群 `description`
   - 每个人的 `description`
   - `rules`
+  - `learned_terms`
 - 生成前自动备份：`<chat_key>.yaml.bak.<时间>`
 - 不调用 LLM
 
@@ -302,6 +327,14 @@ culture: "群文化/常聊话题"
 tone: "KONA 在这个群的语气"
 activity: "主动程度/是否执法"
 
+learned_terms:
+  - term: "群内黑话"
+    meaning: "一句话解释"
+    evidence: "批准时保留的上下文证据"
+    confidence: 0.8
+    updated_at: "2026-11-03"
+    expires_at: "2026-12-18"
+
 rules:
   - text: 不得私发广告、扩列、建群
     action: recall_and_kick
@@ -336,6 +369,7 @@ admin_policy:
   - `note`：自动统计信息，可被生成器覆盖
   - `description`：你写的人物描述，生成器保留
 - `culture/tone/activity`：自动生成，可被生成器覆盖
+- `learned_terms`：只通过 `/group_learn_approve` 写入；`expires_at` 过期后不再注入
 - `rules[].action`：
   - `remind`：只提醒
   - `recall`：撤回
@@ -465,6 +499,18 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `strip_punctuation` | 是否去掉回复标点 |
 | `group_profile_enabled` | 是否启用每群 YAML |
 | `group_profile_max_chars` | 群档案注入上限，默认 2400 |
+| `group_learn_enabled` | 是否启用群黑话候选/注入 |
+| `group_learn_lookback_days` | 黑话候选回看天数，默认 14 |
+| `group_learn_max_messages` | 单次最多读取消息数，默认 150 |
+| `group_learn_max_candidates` | 单次最多候选数，默认 12 |
+| `group_learn_min_confidence` | 最低候选置信度，默认 0.6 |
+| `group_learn_auto_apply` | 是否自动应用高置信度安全候选 |
+| `group_learn_auto_apply_min_confidence` | 自动应用最低置信度，默认 0.85 |
+| `group_learn_auto_apply_limit` | 单次自动应用上限，默认 3 |
+| `group_learn_auto_ttl_days` | 自动应用词条有效期，默认 14 天 |
+| `group_learn_term_limit` | 每群最多保存词条数，默认 30 |
+| `group_learn_inject_limit` | 每轮最多注入词条数，默认 6 |
+| `group_learn_ttl_days` | 词条有效期天数，默认 45 |
 | `force_mute_default_seconds` | `/force_mute` 默认时长 |
 | `proactive_enabled` | 是否启用后台主动冒泡 |
 | `active_chat_probability` | 每轮主动冒泡概率，建议 0.02–0.08 |

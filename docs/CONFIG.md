@@ -92,6 +92,18 @@
 | `group_profile_member_limit` | `8` | 【本群档案】自动生成关键人物数：生成器只把和 KONA 直接互动过的前 N 人写进 members。 |
 | `group_profile_preserve_limit` | `12` | 【本群档案】保留人物上限：重新生成时，已有描述但本次未进前 N 的人会追加保留，members 总数不超过该值。 |
 | `group_profile_generator_lookback_days` | `30` | 【本群档案】生成器回看天数：生成器统计互动时回看最近多少天的聊天记录。 |
+| `group_learn_enabled` | `True` | 【群黑话】启用 `/group_learn` 候选提取，并把已批准词条注入提示词。 |
+| `group_learn_lookback_days` | `14` | 【群黑话】候选提取回看天数。 |
+| `group_learn_max_messages` | `150` | 【群黑话】单次最多读取的有效消息数。 |
+| `group_learn_max_candidates` | `12` | 【群黑话】单次最多保留的候选词条数。 |
+| `group_learn_min_confidence` | `0.6` | 【群黑话】低于该置信度的候选丢弃；也是自动应用阈值的下限。 |
+| `group_learn_auto_apply` | `True` | 【群黑话】生成候选时自动应用高置信度的新词。 |
+| `group_learn_auto_apply_min_confidence` | `0.85` | 【群黑话】自动应用的最低置信度；实际取 max(候选阈值, 该值)。 |
+| `group_learn_auto_apply_limit` | `3` | 【群黑话】单次最多自动应用多少条安全候选。 |
+| `group_learn_auto_ttl_days` | `14` | 【群黑话】自动应用词条的有效期；到期后不再注入。 |
+| `group_learn_term_limit` | `30` | 【群黑话】每群档案最多保存的已批准词条数。 |
+| `group_learn_inject_limit` | `6` | 【群黑话】每轮最多注入的词条数。 |
+| `group_learn_ttl_days` | `45` | 【群黑话】批准后词条的有效天数；过期后不再注入。 |
 
 ### 强制禁言
 
