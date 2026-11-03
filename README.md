@@ -10,7 +10,7 @@
 >
 > 主要适配：OneBot V11 / NapCat（QQ）
 >
-> 仓库：<https://github.com/zhanghx/nekro-plugin-humanoid-chat>
+> 仓库：<https://github.com/AdriftXCore/nekro-plugin-humanoid-chat>
 
 ---
 
@@ -147,7 +147,7 @@
 ### 1. 获取插件
 
 ```bash
-git clone https://github.com/zhanghx/nekro-plugin-humanoid-chat.git
+git clone https://github.com/AdriftXCore/nekro-plugin-humanoid-chat.git
 ```
 
 也可以直接下载 `humanoid_chat.py`。
@@ -622,4 +622,4 @@ PY
 ## 参考
 
 - [Nekro Agent](https://github.com/KroMiose/nekro-agent)
-- [本项目 GitHub 仓库](https://github.com/zhanghx/nekro-plugin-humanoid-chat)
+- [本项目 GitHub 仓库](https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
