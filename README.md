@@ -3,7 +3,7 @@
 一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
 > 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.9.1`
+> 当前版本：`3.9.2`
 > 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
 > 主要适配：OneBot V11 / NapCat（QQ）
 
@@ -85,6 +85,8 @@
   - `/group_learn [chat_key|群号|--all]`：生成候选并自动应用高置信度安全词条
   - `/group_learn_approve <编号|词|all>` / `/group_learn_reject <编号|词|all>`：处理剩余候选
   - `/group_learn_undo`：撤销最近一次自动应用并退回候选
+  - `/group_learn_list`：列出已批准词条
+  - `/group_learn_revoke <编号|词|all>`：撤销指定已批准词条
 
 ---
 
@@ -248,9 +250,11 @@ ssh nas "docker restart nekro_agent"
 - LLM 只输出黑话/缩写/梗/固定称呼/明确偏好候选
 - 置信度达到自动阈值的**新词**最多自动应用 `group_learn_auto_apply_limit` 条
 - 其余候选写入 `group_profiles/<chat_key>.learned_terms.candidates.yaml`，按编号审查
-- 自动应用可用 `/group_learn_undo` 撤销，撤销后词条退回候选列表
+- 自动应用可用 `/group_learn_undo` 整批撤销，撤销后词条退回候选列表
 - 批准：`/group_learn_approve 1`、`/group_learn_approve 1 3`、`/group_learn_approve 词` 或 `/group_learn_approve all`
 - 拒绝：`/group_learn_reject 1` 或 `/group_learn_reject all`
+- 查看已批准：`/group_learn_list`
+- 精确撤销已批准：`/group_learn_revoke 2`、`/group_learn_revoke 1 3`、`/group_learn_revoke 词` 或 `/group_learn_revoke all`
 - 写入 `<chat_key>.yaml` 的 `learned_terms` 后，按有效期和置信度注入
 
 ### `/group_profile_gen`

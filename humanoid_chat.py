@@ -74,7 +74,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.1",
+    version="3.9.2",
     url="https://github.com/nekro-agent/humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -2363,12 +2363,12 @@ def _merge_profile_terms(profile: GroupProfile, terms: List[GroupTerm], ttl_days
     return [item for item in applied if (item.term.strip().casefold(), item.meaning.strip()) in current]
 
 
-def _select_group_terms(data: GroupTermCandidates, selector: str) -> Tuple[List[int], str]:
+def _select_term_indices(terms: List[GroupTerm], selector: str, label: str = "候选") -> Tuple[List[int], str]:
     text = (selector or "").strip()
     if not text:
-        return [], "请提供候选编号、词或 all。"
+        return [], f"请提供{label}编号、词或 all。"
     if text.casefold() in ("all", "全部"):
-        return list(range(len(data.candidates))), ""
+        return list(range(len(terms))), ""
     if re.fullmatch(r"[\d\s,，、]+", text):
         indices: List[int] = []
         for raw in re.split(r"[,，、\s]+", text):
@@ -2378,22 +2378,43 @@ def _select_group_terms(data: GroupTermCandidates, selector: str) -> Tuple[List[
                 number = int(raw)
             except ValueError:
                 return [], f"编号不合法：{raw}"
-            if number < 1 or number > len(data.candidates):
-                return [], f"编号超出范围：{number}（当前共 {len(data.candidates)} 条）"
+            if number < 1 or number > len(terms):
+                return [], f"编号超出范围：{number}（当前共 {len(terms)} 条）"
             index = number - 1
             if index not in indices:
                 indices.append(index)
         if not indices:
-            return [], "没有有效的候选编号。"
+            return [], f"没有有效的{label}编号。"
         return indices, ""
     indices = [
         index
-        for index, item in enumerate(data.candidates)
+        for index, item in enumerate(terms)
         if (item.term or "").strip().casefold() == text.casefold()
     ]
     if not indices:
-        return [], f"候选文件里没有「{text}」。"
+        return [], f"{label}里没有「{text}」。"
     return indices, ""
+
+
+def _select_group_terms(data: GroupTermCandidates, selector: str) -> Tuple[List[int], str]:
+    return _select_term_indices(data.candidates, selector, "候选")
+
+
+def _sorted_learned_terms(profile: GroupProfile) -> List[GroupTerm]:
+    return sorted(
+        profile.learned_terms,
+        key=lambda item: (item.confidence, item.updated_at),
+        reverse=True,
+    )
+
+
+def _term_is_auto(term: GroupTerm, data: GroupTermCandidates) -> bool:
+    key = (term.term or "").strip().casefold()
+    meaning = (term.meaning or "").strip()
+    return any(
+        (item.term or "").strip().casefold() == key and (item.meaning or "").strip() == meaning
+        for item in data.last_auto_applied
+    )
 
 
 def _format_term_names(terms: List[GroupTerm]) -> str:
@@ -2734,6 +2755,66 @@ async def _undo_group_terms(chat_key: str) -> str:
     _save_group_term_candidates(chat_key, data)
     _log("info", f"群黑话已撤销自动应用: {chat_key} terms={restored_names}")
     return f"已撤销 {len(removed)} 条自动应用词条，并退回候选：{restored_names}"
+
+
+async def _list_group_terms(chat_key: str) -> str:
+    profile = _load_group_profile(chat_key)
+    if profile is None:
+        return "本群还没有档案。"
+    data = _load_group_term_candidates(chat_key)
+    terms = _sorted_learned_terms(profile)
+    if not terms:
+        return "当前群没有已批准的黑话词条。"
+    today = _local_now().date()
+    lines = ["当前群已批准黑话："]
+    for index, term in enumerate(terms, 1):
+        flags: List[str] = ["自动" if _term_is_auto(term, data) else "手动"]
+        expires_at = _parse_group_term_date(term.expires_at)
+        if expires_at is not None and expires_at.date() < today:
+            flags.append("已过期")
+        expiry = f"，至 {term.expires_at}" if term.expires_at else ""
+        lines.append(
+            f"{index}. {term.term}（{term.confidence:.2f}，{'，'.join(flags)}{expiry}）：{term.meaning}"
+        )
+    return "\n".join(lines)
+
+
+async def _revoke_group_terms(chat_key: str, selector: str) -> str:
+    if not config.group_learn_enabled:
+        return "群黑话功能已关闭。"
+    profile = _load_group_profile(chat_key)
+    if profile is None:
+        return "本群还没有档案，无法撤销。"
+    terms = _sorted_learned_terms(profile)
+    if not terms:
+        return "当前群没有已批准的黑话词条。"
+    indices, error = _select_term_indices(terms, selector, "已批准词条")
+    if error:
+        return error
+    chosen = [terms[index] for index in indices]
+    chosen_keys = {
+        ((item.term or "").strip().casefold(), (item.meaning or "").strip(), item.updated_at)
+        for item in chosen
+    }
+    profile.learned_terms = [
+        item
+        for item in profile.learned_terms
+        if ((item.term or "").strip().casefold(), (item.meaning or "").strip(), item.updated_at) not in chosen_keys
+    ]
+    _save_group_profile_file(chat_key, profile)
+
+    data = _load_group_term_candidates(chat_key)
+    revoked_keys = {(item.term or "").strip().casefold() for item in chosen}
+    before_auto = len(data.last_auto_applied)
+    data.last_auto_applied = [
+        item for item in data.last_auto_applied if (item.term or "").strip().casefold() not in revoked_keys
+    ]
+    if len(data.last_auto_applied) != before_auto:
+        if not data.last_auto_applied:
+            data.last_auto_applied_at = ""
+        _save_group_term_candidates(chat_key, data)
+    _log("info", f"群黑话已撤销已批准词条: {chat_key} terms={_format_term_names(chosen)}")
+    return f"已撤销 {len(chosen)} 条已批准词条：{_format_term_names(chosen)}"
 
 def _role_label(role: str) -> str:
     return {"owner": "群主", "admin": "管理员", "member": "普通成员"}.get(role, "未知")
@@ -3294,7 +3375,7 @@ async def group_learn_reject_cmd(
 @plugin.mount_command(
     name="group_learn_undo",
     description="撤销最近一次自动应用的群黑话，并退回候选列表",
-    aliases=["撤销黑话"],
+    aliases=["撤销自动黑话"],
     usage="group_learn_undo",
     permission=CommandPermission.SUPER_USER,
     category="拟人",
@@ -3303,6 +3384,35 @@ async def group_learn_undo_cmd(
     context: CommandExecutionContext,
 ) -> CommandResponse:
     result = await _undo_group_terms(context.chat_key)
+    return CmdCtl.success(result) if result.startswith("已撤销") else CmdCtl.failed(result)
+
+
+@plugin.mount_command(
+    name="group_learn_list",
+    description="列出当前群已批准的黑话词条，带编号、置信度、来源和有效期",
+    aliases=["黑话列表"],
+    usage="group_learn_list",
+    permission=CommandPermission.SUPER_USER,
+    category="拟人",
+)
+async def group_learn_list_cmd(context: CommandExecutionContext) -> CommandResponse:
+    result = await _list_group_terms(context.chat_key)
+    return CmdCtl.success(result)
+
+
+@plugin.mount_command(
+    name="group_learn_revoke",
+    description="按编号、词或 all 撤销当前群已批准的黑话词条",
+    aliases=["撤销黑话", "删除黑话"],
+    usage="group_learn_revoke <编号|词|all>",
+    permission=CommandPermission.SUPER_USER,
+    category="拟人",
+)
+async def group_learn_revoke_cmd(
+    context: CommandExecutionContext,
+    selector: Annotated[str, Arg("已批准词条编号、词或 all", positional=True, greedy=True)] = "",
+) -> CommandResponse:
+    result = await _revoke_group_terms(context.chat_key, selector)
     return CmdCtl.success(result) if result.startswith("已撤销") else CmdCtl.failed(result)
 
 
