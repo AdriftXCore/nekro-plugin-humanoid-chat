@@ -10,7 +10,7 @@
 - 与「表情管理」插件协作：不碰图库与表情 ID，只用它给的路径
 - 与「好感度系统」插件协作：不重复维护长期好感度，只补充即时情绪
 
-部署位置：/volume1/docker/nekro-agent/plugins/workdir/humanoid_chat.py
+部署位置：Nekro Agent 插件目录（例如 <Nekro 数据目录>/plugins/workdir/humanoid_chat.py）
 """
 
 from __future__ import annotations
@@ -74,8 +74,8 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.2",
-    url="https://github.com/nekro-agent/humanoid-chat",
+    version="3.9.3",
+    url="https://github.com/zhanghx/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
 
@@ -401,7 +401,7 @@ class HumanoidConfig(ConfigBase):
         default=10,
         ge=1,
         title="【本群档案】群角色缓存（分钟）",
-        description="自动识别 KONA 在群里的 owner/admin/member 角色，缓存多久。",
+        description="自动识别机器人在群里的 owner/admin/member 角色，缓存多久。",
     )
     group_profile_max_chars: int = Field(
         default=2400,
@@ -414,7 +414,7 @@ class HumanoidConfig(ConfigBase):
         ge=1,
         le=20,
         title="【本群档案】自动生成关键人物数",
-        description="生成器只把和 KONA 直接互动过的前 N 人写进 members。",
+        description="生成器只把和机器人直接互动过的前 N 人写进 members。",
     )
     group_profile_preserve_limit: int = Field(
         default=12,
@@ -527,7 +527,7 @@ class HumanoidConfig(ConfigBase):
     force_mute_allow_admins: bool = Field(
         default=False,
         title="【强制禁言】允许禁言管理员",
-        description="仅当 KONA 自己是群主时生效；默认不允许对管理员执行强制禁言。",
+        description="仅当机器人自己是群主时生效；默认不允许对管理员执行强制禁言。",
     )
 
     # --- 作息与疲劳 ---
@@ -819,7 +819,7 @@ class HumanoidConfig(ConfigBase):
         description="Bangumi API 地址，默认 https://api.bgm.tv。",
     )
     bangumi_user_agent: str = Field(
-        default="humanoid_chat/3.5.0 (Nekro Agent; +https://github.com/nekro-agent/humanoid-chat)",
+        default="humanoid_chat/3.9.3 (Nekro Agent; +https://github.com/zhanghx/nekro-plugin-humanoid-chat)",
         title="【Bangumi】User-Agent",
         description="Bangumi 要求带可识别 User-Agent；一般不用改。",
     )
@@ -1307,7 +1307,7 @@ def _bangumi_request(
     query = urllib.parse.urlencode(params or {})
     url = f"{base_url}{path}" + (f"?{query}" if query else "")
     headers = {
-        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.5.0").strip(),
+        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.3").strip(),
         "Accept": "application/json",
     }
     token = (config.bangumi_access_token or "").strip()
@@ -2027,7 +2027,6 @@ def _prepare_qzone_images(images: List[str]) -> List[str]:
         name = Path(value).name
         if name:
             candidates.append(Path("/app/uploads") / name)
-            candidates.append(Path("/volume1/docker/nekro-agent/uploads") / name)
         source = next((candidate for candidate in candidates if candidate.exists()), None)
         if source is None:
             raise ValueError(f"图片路径不存在: {value}")
@@ -3151,7 +3150,7 @@ async def _generate_group_profile(chat_key: str) -> Dict[str, Any]:
     members: List[GroupPerson] = []
     for uid, data in candidates[:member_limit]:
         member = member_map[uid]
-        note = f"与KONA直接互动 {data['direct']} 次；群内发言 {data['total']} 条"
+        note = f"与机器人直接互动 {data['direct']} 次；群内发言 {data['total']} 条"
         members.append(
             _member_person(
                 member,
@@ -3235,7 +3234,7 @@ async def _generate_group_profile(chat_key: str) -> Dict[str, Any]:
 
 @plugin.mount_command(
     name="group_profile_gen",
-    description="根据群成员和与KONA的直接互动生成每群档案 YAML（保留所有 description）",
+    description="根据群成员和与机器人的直接互动生成每群档案 YAML（保留所有 description）",
     usage="group_profile_gen [chat_key|群号|--all]",
     permission=CommandPermission.SUPER_USER,
     category="拟人",
@@ -3457,7 +3456,7 @@ async def force_mute_cmd(
         return CmdCtl.failed(f"获取群信息失败: {exc}")
 
     if bot_role not in ("owner", "admin"):
-        return CmdCtl.failed("KONA 在该群不是群主/管理员，无法禁言")
+        return CmdCtl.failed("机器人在该群不是群主/管理员，无法禁言")
 
     successes: List[str] = []
     errors: List[str] = []
@@ -3482,7 +3481,7 @@ async def force_mute_cmd(
             continue
         if target_role == "admin" and not (bot_role == "owner" and config.force_mute_allow_admins):
             errors.append(
-                f"{qq}: 不能禁言管理员（需要 KONA 是群主且开启 force_mute_allow_admins）",
+                f"{qq}: 不能禁言管理员（需要机器人是群主且开启 force_mute_allow_admins）",
             )
             continue
 

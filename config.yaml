@@ -1,5 +1,5 @@
-extra_bot_names: 次方,少女A
-trigger_keywords: 代码,FPGA,吉他,买什么,推荐,动漫,漫画,游戏
+extra_bot_names: ''
+trigger_keywords: ''
 keyword_reply_probability: 0.8
 reply_probability: 0.05
 reply_cd_seconds: 30
@@ -116,7 +116,7 @@ quoted_link_always_fetch: true
 bangumi_enabled: true
 bangumi_access_token: ''
 bangumi_base_url: https://api.bgm.tv
-bangumi_user_agent: humanoid_chat/3.5.0 (Nekro Agent; +https://github.com/nekro-agent/humanoid-chat)
+bangumi_user_agent: humanoid_chat/3.9.3 (Nekro Agent; +https://github.com/zhanghx/nekro-plugin-humanoid-chat)
 bangumi_timeout_seconds: 12
 bangumi_search_limit: 5
 bangumi_character_limit: 10

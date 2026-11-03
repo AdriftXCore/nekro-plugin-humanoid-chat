@@ -22,12 +22,12 @@ members:
   - name: 示例群友A
     qq: "100000003"
     aliases: [A]
-    note: 与KONA直接互动 20 次；群内发言 50 条
+    note: 与机器人直接互动 20 次；群内发言 50 条
     description: "喜欢动画和游戏"
   - name: 示例群友B
     qq: "100000004"
     aliases: [B]
-    note: 与KONA直接互动 8 次；群内发言 12 条
+    note: 与机器人直接互动 8 次；群内发言 12 条
     description: "写小说，偶尔问设定"
 
 culture: "群友喜欢动画、游戏、写作；语气可以放松"

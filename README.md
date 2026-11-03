@@ -1,11 +1,16 @@
 # Nekro Agent 拟人交互助手（humanoid_chat）
 
-一个让 Nekro Agent 的聊天回复更像真人的插件：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
+让 Nekro Agent 的聊天回复更像真人：分段与打字节奏、情绪/精力、群内身份档案、群规执法、作息疲劳、主动潜水、口语化瑕疵，以及与表情/好感度/记忆系统的协作。
 
-> 插件文件：`humanoid_chat.py`  
-> 当前版本：`3.9.2`
-> 适用：Nekro Agent `2.4.x`（在当前 NAS 镜像上验证）
+> 插件文件：`humanoid_chat.py`
+>
+> 当前版本：`3.9.3`
+>
+> 适用：Nekro Agent `2.4.x+`
+>
 > 主要适配：OneBot V11 / NapCat（QQ）
+>
+> 仓库：<https://github.com/zhanghx/nekro-plugin-humanoid-chat>
 
 ---
 
@@ -30,7 +35,7 @@
   - 夜间恢复精力，低精力时更短、更慢、更少主动说话
 - **本群档案**
   - 每个群一个 YAML：群描述、身份、群主/管理员、关键人物、群文化、语气、群规、管理策略
-  - 自动识别 KONA 在群里的 `owner/admin/member` 角色
+  - 自动识别机器人在群里的 `owner/admin/member` 角色
   - 可手动覆盖身份
   - 普通成员群只提醒不执法；群主/管理员群可按群规执法
   - 可选群黑话候选：`/group_learn` 自动应用高置信度安全候选，其余编号审查，可撤销
@@ -54,20 +59,19 @@
   - 底层使用 DeepSeek Search/Fetch API，Bearer Key 在插件配置中填写
   - 搜索返回标题、摘要、来源和 URL；抓取返回网页 Markdown 正文
   - B 站视频链接会直接读取公开 API，自动附带标题、UP 主、播放数据和热门评论
-  - 用户引用卡片/消息时，会把被引用消息的链接注入提示词，优先使用引用链接而不是上下文其它链接
-  - 明确引用 100% 允许抓取；模糊指代按 `link_fetch_probability` 概率提示，AI 再判断相关性
-  - 模糊指代判定不允许时，`human_fetch` 会在工具层拦截上下文链接，避免 AI 绕过概率
-  - 引用图片时提取图片路径并交给多模态上下文；图片不在最近视觉窗口时直接回复“没看到”，不再从历史链接猜
-  - 引用无链接卡片时直接根据卡片标题回复，不触发 AI；普通文字引用恢复正常聊天，避免风子群复读链
-  - `human_fetch` 可独立开关；Key 未配置、限流、余额不足或网络失败时明确报错，不静默编造
+  - 用户引用卡片/消息时，会把被引用消息的链接注入提示词，优先使用引用链接
+  - 明确引用 100% 允许抓取；模糊指代按 `link_fetch_probability` 概率提示
+  - 引用图片时提取图片路径并交给多模态上下文；图片不在最近视觉窗口时直接回复“没看到”
+  - 引用无链接卡片时直接根据卡片标题回复，不触发 AI
+  - `human_fetch` 可独立开关；Key 未配置、限流、余额不足或网络失败时明确报错
 - **Bangumi 动漫资料**
   - 提供 `human_bangumi_search`、`human_bangumi_subject`、`human_bangumi_characters`、`human_bangumi_calendar`
   - 查询动画条目、评分、简介、角色/声优和每日放送
   - 遇到具体动漫事实且 AI 不确定时主动查 Bangumi；普通闲聊/玩梗不查
   - Token 可选，默认匿名查询公开条目；Token 只放插件配置，不写入仓库
 - **红包识别与推脱**
-  - 识别群里的红包卡片，记录标题和是否点名 KONA
-  - 不主动提红包；有人让 KONA 收/领/抢红包时，用“QQ没实名”自然推脱
+  - 识别群里的红包卡片，记录标题和是否点名机器人
+  - 不主动提红包；有人让机器人收/领/抢红包时，用“QQ没实名”自然推脱
   - 不领取、不假装收到、不报金额
 - **QQ空间说说**
   - 提供 `human_qzone_publish(content, images, ugc_right)`
@@ -79,14 +83,6 @@
   - 不重复维护好感度分数；长期好感度由「好感度系统」负责
   - 支持 Nekro 自带记忆系统的被动注入
   - 支持「主动记忆工具」插件的主动检索
-- **实用命令**
-  - `/force_mute <QQ[,QQ...]> [秒数]`：超级管理员强制禁言/解禁
-  - `/group_profile_gen [chat_key|群号|--all]`：根据群成员和与 KONA 的直接互动生成群档案初稿
-  - `/group_learn [chat_key|群号|--all]`：生成候选并自动应用高置信度安全词条
-  - `/group_learn_approve <编号|词|all>` / `/group_learn_reject <编号|词|all>`：处理剩余候选
-  - `/group_learn_undo`：撤销最近一次自动应用并退回候选
-  - `/group_learn_list`：列出已批准词条
-  - `/group_learn_revoke <编号|词|all>`：撤销指定已批准词条
 
 ---
 
@@ -95,20 +91,20 @@
 ```text
 .
 ├── humanoid_chat.py                 # 插件本体（单文件）
-├── config.yaml                      # 当前生产配置参考（不含密钥）
+├── config.yaml                      # 示例配置（不含密钥）
 ├── docs/CONFIG.md                   # 全量配置项参考
 ├── examples/
 │   ├── group_profile.owner.example.yaml
 │   └── group_profile.member.example.yaml
 ├── scripts/
 │   ├── check.sh                     # 语法/YAML 自检
-│   ├── deploy.sh                    # 部署到 NAS（可带配置/档案/热重载）
+│   ├── deploy.sh                    # 可选部署脚本，需按环境修改
 │   └── publish.sh                   # git commit + push
-├── AGENTS.md                        # 给后续 AI/维护者的仓库说明
+├── CHANGELOG.md
 └── README.md
 ```
 
-> 真实的 `group_profiles/` 含群成员 QQ、昵称、群规，默认不提交到仓库；只提交脱敏示例。
+> 真实的 `group_profiles/` 含群成员 QQ、昵称、群规，不要提交到公开仓库；只提交脱敏示例。
 
 ---
 
@@ -126,7 +122,7 @@
 
 | 插件 / 能力 | 插件 key | 用途 | 缺失时 |
 | --- | --- | --- | --- |
-| 群管助手 | `XiaoJiu.group_admin` | AI 实际执行禁言、撤回、踢人；`/force_mute` 不依赖它 | 仍可注入群规和提醒，但 AI 不能实际执法；`/force_mute` 仍可禁言，不能踢 |
+| 群管助手 | `XiaoJiu.group_admin` | AI 实际执行禁言、撤回、踢人；`/force_mute` 不依赖它 | 仍可注入群规和提醒，但 AI 不能实际执法 |
 | 表情管理 | `xggm.emotions` | 提供 `xemo_get_best_emotion_path`，本插件只控制发送时机 | 不能自动选表情；建议关闭 `enable_sticker_coordination` / `sticker_emotion_hint` |
 | 好感度系统 | `liugu.nekro_favorability` | 维护长期好感度分数、事件、标签 | 本插件仍可运行，但长期好感度不存在 |
 | 主动记忆工具 | `KroMiose.memory_tools` | 让 AI 主动搜索工作区记忆 | 只能使用被动记忆注入 |
@@ -135,89 +131,92 @@
 
 ### Python / 运行时依赖
 
-插件本身不额外安装 pip 包，使用 Nekro 镜像内已有依赖：
+插件本身不额外安装 pip 包，使用 Nekro Agent 运行环境已有依赖：
 
 - `pydantic`（v2）
 - `PyYAML`（群档案）
 - `nonebot2`
 - `nekro_agent` 内部模块
 
-插件自身**不调用 LLM**；记忆沉淀/增强检索/绘图等才会消耗模型额度。
+插件主体不主动调用 LLM；群黑话提取、记忆沉淀、增强检索、绘图等场景才会消耗模型额度。
 
 ---
 
-## 安装与部署
+## 安装
 
-### 1. 放置插件
+### 1. 获取插件
 
-把 `humanoid_chat.py` 放到 NAS：
-
-```text
-/volume1/docker/nekro-agent/plugins/workdir/humanoid_chat.py
+```bash
+git clone https://github.com/zhanghx/nekro-plugin-humanoid-chat.git
 ```
 
-### 2. 放置配置（可选）
+也可以直接下载 `humanoid_chat.py`。
 
-把 `config.yaml` 放到：
+### 2. 放入插件目录
+
+把 `humanoid_chat.py` 放到 Nekro Agent 的插件工作目录。不同部署方式的路径不同，通常类似：
 
 ```text
-/volume1/docker/nekro-agent/plugin_data/afx.humanoid_chat/config.yaml
+<Nekro 数据目录>/plugins/workdir/humanoid_chat.py
 ```
 
-首次加载时插件也会自动生成默认配置。
+然后在 Nekro Agent WebUI 中启用「拟人交互助手」。
 
-### 3. 放置群档案（可选）
+### 3. 配置
+
+首次加载会自动生成默认配置。也可以手动放置示例配置：
 
 ```text
-/volume1/docker/nekro-agent/plugin_data/afx.humanoid_chat/group_profiles/
+<Nekro 数据目录>/plugin_data/afx.humanoid_chat/config.yaml
+```
+
+不要把真实 API Key、Token 提交到公开仓库。
+
+### 4. 群档案（可选）
+
+```text
+<Nekro 数据目录>/plugin_data/afx.humanoid_chat/group_profiles/
   onebot_v11-group_<群号>.yaml
 ```
 
-### 4. 重载插件
+不配置群档案也可以正常聊天，只是没有群身份、群规和关键人物信息。
 
-优先使用 Nekro WebUI/API 热重载 `humanoid_chat`。  
-如果改了核心配置或群管插件包，建议重启容器：
+### 5. 重载插件
 
-```bash
-ssh nas "docker restart nekro_agent"
-```
-
-### 使用脚本部署
+优先在 Nekro Agent WebUI/API 中热重载 `humanoid_chat`。
+如果修改了 Nekro 核心配置或群管插件包，重启你的 `nekro_agent` 容器：
 
 ```bash
-# 只部署插件代码
-./scripts/deploy.sh
-
-# 同时部署 config.yaml
-./scripts/deploy.sh --with-config
-
-# 同时部署本地群档案（目录下 *.yaml）
-./scripts/deploy.sh --profiles ./profiles
-
-# 部署后热重载插件
-./scripts/deploy.sh --reload
+docker restart <你的 nekro_agent 容器名>
 ```
-
-`deploy.sh` 默认使用 SSH 别名 `nas`，可用 `NAS=other-host ./scripts/deploy.sh` 覆盖。
 
 ---
 
 ## 快速开始
 
-1. 部署 `humanoid_chat.py`
-2. 在 WebUI 启用「拟人交互助手」
-3. 调整基础配置：
-   - `extra_bot_names`：群友怎么叫你
+1. 启用「拟人交互助手」
+2. 调整基础配置：
+   - `extra_bot_names`：群友怎么叫你的机器人
    - `trigger_keywords`：哪些话题会提高接话概率
    - `min_segment_gap`：分段最小间隔（默认 2 秒）
    - `strip_punctuation`：回复是否去标点
-4. 如需群身份/群规：配置 `group_profiles/<chat_key>.yaml`
-5. 如需实际禁言/撤回/踢人：安装并配置 `XiaoJiu.group_admin`
-6. 如需长期记忆：给频道绑定 workspace
+3. 如需群身份/群规：配置 `group_profiles/<chat_key>.yaml`
+4. 如需实际禁言/撤回/踢人：安装并配置 `XiaoJiu.group_admin`
+5. 如需长期记忆：给频道绑定 workspace
 
 ---
 
 ## 命令
+
+### 查看全部命令
+
+Nekro Agent 自带：
+
+```text
+/na_help
+```
+
+会按分类列出所有已注册命令。命令较多时会自动使用合并转发。
 
 ### `/force_mute`
 
@@ -229,19 +228,18 @@ ssh nas "docker restart nekro_agent"
 ```
 
 - 权限：仅超级管理员
-- 仅 onebot 群聊
+- 仅 OneBot 群聊
 - 不能禁言自己、群主
-- 默认不能禁言管理员；只有 KONA 自己是群主且 `force_mute_allow_admins=true` 才允许
+- 默认不能禁言管理员；只有机器人自己是群主且 `force_mute_allow_admins=true` 才允许
 - 不依赖「群管助手」，直接调用 OneBot `set_group_ban`
 - 因此不受群管插件的 `ALLOW_GROUPS` / `PROTECTED_USERS` / `ENABLE_MUTE` 限制
 
 ### `/group_learn`
 
 ```text
-/group_learn                           # 当前群
-/group_learn 712127976                 # 指定群号
-/group_learn onebot_v11-group_109884934
-/group_learn --all                     # 所有 onebot 群
+/group_learn                     # 当前群
+/group_learn <群号>              # 指定群号
+/group_learn --all               # 所有 OneBot 群
 ```
 
 - 权限：仅超级管理员
@@ -250,35 +248,29 @@ ssh nas "docker restart nekro_agent"
 - LLM 只输出黑话/缩写/梗/固定称呼/明确偏好候选
 - 置信度达到自动阈值的**新词**最多自动应用 `group_learn_auto_apply_limit` 条
 - 其余候选写入 `group_profiles/<chat_key>.learned_terms.candidates.yaml`，按编号审查
-- 自动应用可用 `/group_learn_undo` 整批撤销，撤销后词条退回候选列表
+- 自动应用可用 `/group_learn_undo` 整批撤销
 - 批准：`/group_learn_approve 1`、`/group_learn_approve 1 3`、`/group_learn_approve 词` 或 `/group_learn_approve all`
 - 拒绝：`/group_learn_reject 1` 或 `/group_learn_reject all`
 - 查看已批准：`/group_learn_list`
 - 精确撤销已批准：`/group_learn_revoke 2`、`/group_learn_revoke 1 3`、`/group_learn_revoke 词` 或 `/group_learn_revoke all`
-- 写入 `<chat_key>.yaml` 的 `learned_terms` 后，按有效期和置信度注入
 
 ### `/group_profile_gen`
 
 ```text
 /group_profile_gen                     # 当前群
-/group_profile_gen 712127976           # 指定群号
-/group_profile_gen onebot_v11-group_109884934
-/group_profile_gen --all               # 所有 onebot 群
+/group_profile_gen <群号>              # 指定群号
+/group_profile_gen --all               # 所有 OneBot 群
 ```
 
 - 权限：仅超级管理员
-- 只统计和 KONA **直接互动**的人：
+- 只统计和机器人 **直接互动**的人：
   - `is_tome=1`
-  - 引用 KONA 的消息
-  - 消息里出现 KONA 名字/别名
-- 排除 KONA、SYSTEM、群主、管理员
+  - 引用机器人的消息
+  - 消息里出现机器人名字/别名
+- 排除机器人自己、SYSTEM、群主、管理员
 - 只取互动次数前 N 人（`group_profile_member_limit`，默认 8）
 - 自动生成角色、群主、管理员、关键人物、culture、tone、activity、admin_policy
-- **不覆盖**：
-  - 群 `description`
-  - 每个人的 `description`
-  - `rules`
-  - `learned_terms`
+- **不覆盖**：群 `description`、人物 `description`、`rules`、`learned_terms`
 - 生成前自动备份：`<chat_key>.yaml.bak.<时间>`
 - 不调用 LLM
 
@@ -289,20 +281,19 @@ ssh nas "docker restart nekro_agent"
 ### 文件位置
 
 ```text
-/volume1/docker/nekro-agent/plugin_data/afx.humanoid_chat/group_profiles/<chat_key>.yaml
+<Nekro 数据目录>/plugin_data/afx.humanoid_chat/group_profiles/<chat_key>.yaml
 ```
 
-`chat_key` 示例：
+`chat_key` 通常形如：
 
 ```text
-onebot_v11-group_712127976
-onebot_v11-group_109884934
+onebot_v11-group_<群号>
 ```
 
 ### 完整结构
 
 ```yaml
-description: "这个群是干什么的、氛围如何"   # 你自己写，生成器保留
+description: "这个群是干什么的、氛围如何"
 enabled: true
 role: auto                                  # auto | owner | admin | member
 
@@ -310,8 +301,8 @@ owner:
   name: 群主昵称
   qq: "100000001"
   aliases: [群主别名]
-  note: 本群群主                           # 自动生成，可覆盖
-  description: "你写的人物描述"             # 生成器保留
+  note: 本群群主
+  description: "你写的人物描述"
 
 admins:
   - name: 管理员昵称
@@ -324,11 +315,11 @@ members:
   - name: 关键群友
     qq: "100000003"
     aliases: [别名]
-    note: 与KONA直接互动 N 次；群内发言 M 条
+    note: 与机器人直接互动 N 次；群内发言 M 条
     description: "你写的人物描述"
 
 culture: "群文化/常聊话题"
-tone: "KONA 在这个群的语气"
+tone: "机器人在这个群的语气"
 activity: "主动程度/是否执法"
 
 learned_terms:
@@ -363,7 +354,7 @@ admin_policy:
 - `description`：群描述，生成器永远保留
 - `enabled`：是否启用本群档案
 - `role`：
-  - `auto`：运行时用 OneBot 查 KONA 实际角色
+  - `auto`：运行时用 OneBot 查询机器人实际角色
   - `owner/admin/member`：语气/身份的手动覆盖
   - **实际权限始终以平台实际角色为准**
 - `owner/admins/members`：
@@ -373,7 +364,7 @@ admin_policy:
   - `note`：自动统计信息，可被生成器覆盖
   - `description`：你写的人物描述，生成器保留
 - `culture/tone/activity`：自动生成，可被生成器覆盖
-- `learned_terms`：只通过 `/group_learn_approve` 写入；`expires_at` 过期后不再注入
+- `learned_terms`：只通过群黑话命令写入；`expires_at` 过期后不再注入
 - `rules[].action`：
   - `remind`：只提醒
   - `recall`：撤回
@@ -388,7 +379,7 @@ admin_policy:
   - `protected`：不操作的身份
   - `protected_extra`：额外保护 QQ
   - `max_mute_seconds`：提示词里的禁言上限
-  - `cooldown_seconds`：提示词里的冷却；**目前不是硬限制**
+  - `cooldown_seconds`：提示词里的冷却；目前不是硬限制
 
 > 重要：`admin_policy` 是提示词/SOP；真正的硬权限由「群管助手」的 `ALLOW_GROUPS`、`ENABLE_MUTE`、`ENABLE_DELETE_MSG`、`ENABLE_KICK`、`PROTECTED_USERS`、`MAX_MUTE_DURATION` 控制。
 
@@ -405,7 +396,7 @@ AI 实际禁言/撤回/踢人由 `XiaoJiu.group_admin` 执行。推荐：
 
 ```yaml
 ALLOW_GROUPS:
-  - '109884934'
+  - '<群号>'
 PERMISSION_MODE: ai_autonomous
 ENABLE_MUTE: true
 ENABLE_DELETE_MSG: true
@@ -414,9 +405,9 @@ ENABLE_KICK_AND_BAN: false
 ENABLE_ADMIN_REPORT: true
 MAX_MUTE_DURATION: 600
 PROTECTED_USERS:
-  - 'KONA的QQ'
-  - '群主QQ'
-  - '管理员QQ'
+  - '<机器人QQ>'
+  - '<群主QQ>'
+  - '<管理员QQ>'
 ```
 
 - `ALLOW_GROUPS` 为空时允许所有群；生产环境建议显式列出
@@ -425,17 +416,6 @@ PROTECTED_USERS:
 - 规则写了 `recall_and_kick`，还需要 `ENABLE_KICK: true` 才会真的踢
 - 规则写了 `recall_and_mute`，需要 `ENABLE_DELETE_MSG` 和 `ENABLE_MUTE`
 - `MAX_MUTE_DURATION` 是硬上限；YAML 里的 `duration` 不应超过它
-
-### 已知问题
-
-`XiaoJiu.group_admin` 旧版本在操作成功后调用 `config.ADMIN_CHAT_KEY` 会报：
-
-```text
-'CoreConfig' object has no attribute 'ADMIN_CHAT_KEY'
-```
-
-这会导致工具返回“操作失败”，但实际动作可能已经执行。  
-本仓库维护时已在本地包中做了兼容修复（`getattr(config, "ADMIN_CHAT_KEY", "")`）；升级云端插件后如果复现，需要重新打补丁或关闭 `ENABLE_ADMIN_REPORT`。
 
 ---
 
@@ -451,7 +431,7 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 注意：
 
 - workspace 的 `status=stopped` 只代表 CC 沙盒未启动，**不影响 NA 记忆**
-- 记忆检索是按 `workspace_id` 过滤，不是按群过滤；同一 workspace 的多个群会共享记忆
+- 记忆检索按 `workspace_id` 过滤，不是按群过滤；同一 workspace 的多个群会共享记忆
 - 想分群隔离，每群一个 workspace
 - `/group_profile_gen` 和群档案不依赖 workspace；只有长期记忆依赖
 - 被动记忆注入上限由 `MEMORY_CONTEXT_MAX_LENGTH` 控制（建议 800–1200）
@@ -488,7 +468,7 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 
 ## 配置说明
 
-- 当前生产配置参考：[config.yaml](config.yaml)
+- 示例配置：[config.yaml](config.yaml)
 - 全量字段说明：[docs/CONFIG.md](docs/CONFIG.md)
 
 常用配置：
@@ -504,17 +484,11 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `group_profile_enabled` | 是否启用每群 YAML |
 | `group_profile_max_chars` | 群档案注入上限，默认 2400 |
 | `group_learn_enabled` | 是否启用群黑话候选/注入 |
-| `group_learn_lookback_days` | 黑话候选回看天数，默认 14 |
-| `group_learn_max_messages` | 单次最多读取消息数，默认 150 |
-| `group_learn_max_candidates` | 单次最多候选数，默认 12 |
-| `group_learn_min_confidence` | 最低候选置信度，默认 0.6 |
 | `group_learn_auto_apply` | 是否自动应用高置信度安全候选 |
 | `group_learn_auto_apply_min_confidence` | 自动应用最低置信度，默认 0.85 |
 | `group_learn_auto_apply_limit` | 单次自动应用上限，默认 3 |
 | `group_learn_auto_ttl_days` | 自动应用词条有效期，默认 14 天 |
-| `group_learn_term_limit` | 每群最多保存词条数，默认 30 |
 | `group_learn_inject_limit` | 每轮最多注入词条数，默认 6 |
-| `group_learn_ttl_days` | 词条有效期天数，默认 45 |
 | `force_mute_default_seconds` | `/force_mute` 默认时长 |
 | `proactive_enabled` | 是否启用后台主动冒泡 |
 | `active_chat_probability` | 每轮主动冒泡概率，建议 0.02–0.08 |
@@ -522,53 +496,16 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `sticker_emotion_hint` | 情绪明显时是否提示发表情 |
 | `draw_refuse_enabled` | 是否启用画图概率拒绝 |
 | `draw_refuse_probability` | 普通用户请求画图的拒绝概率，默认 0.8 |
-| `draw_refuse_exempt_superusers` | 超级管理员是否豁免画图拒绝 |
-| `draw_proactive_enabled` | 是否允许 AI 主动画图 |
-| `draw_proactive_probability` | 每轮允许主动画图的独立概率，默认 0.1 |
-| `draw_proactive_cooldown_minutes` | 主动画图建议冷却，默认 180 分钟 |
-| `draw_proactive_max_per_day` | 主动画图每日上限，默认 1 张 |
 | `human_search_enabled` | 是否启用 `human_search` |
 | `human_fetch_enabled` | 是否启用 `human_fetch` |
 | `human_search_api_key` | DeepSeek Search/Fetch Bearer Key，留空则不可用 |
-| `human_search_base_url` | DeepSeek API 地址，默认 `https://api.deepseek.com` |
-| `human_search_max_results` | 默认搜索结果数，默认 5 |
-| `human_search_timeout_seconds` | 搜索/抓取超时，默认 12 秒 |
-| `human_search_need_content` | 搜索是否返回网页正文，默认关闭 |
-| `human_fetch_max_chars` | 抓取正文最大字符数，默认 6000 |
-| `bili_comments_enabled` | B 站链接是否自动附带评论 |
-| `bili_comments_limit` | B 站评论条数，默认 10 |
-| `bili_comments_sort` | B 站评论排序：`hot` / `time` |
-| `link_fetch_enabled` | 是否允许根据最近链接上下文抓取 |
-| `link_fetch_probability` | 模糊指代自动抓取概率，默认 0.3 |
-| `link_context_limit` | 最近链接候选数量，默认 5 |
-| `link_context_max_age_minutes` | 最近链接有效期，默认 30 分钟 |
-| `quoted_link_always_fetch` | 明确引用链接时是否 100% 允许抓取 |
-| `bangumi_enabled` | 是否启用 Bangumi 动漫查询 |
 | `bangumi_access_token` | Bangumi Access Token，留空匿名查询 |
-| `bangumi_search_limit` | Bangumi 默认搜索结果数 |
-| `bangumi_character_limit` | Bangumi 默认角色结果数 |
-| `bangumi_calendar_limit` | Bangumi 每日放送结果数 |
-| `bangumi_include_nsfw` | 是否包含 NSFW 条目 |
 | `red_packet_enabled` | 是否识别红包卡片 |
-| `red_packet_refusal_reason` | 拒绝收红包的参考理由 |
-| `red_packet_context_minutes` | 红包上下文有效期，默认 10 分钟 |
 | `qzone_enabled` | 是否启用 QQ 空间发说说 |
-| `qzone_default_ugc_right` | 默认可见范围，1=所有人 |
-| `qzone_max_chars` | 说说正文最大字符数 |
-| `qzone_images_enabled` | 是否允许带图 |
-| `qzone_max_images` | 最多图片数 |
-| `qzone_proactive_enabled` | 是否允许主动发空间 |
-| `qzone_cooldown_minutes` | 发布冷却，默认 360 分钟 |
-| `qzone_max_per_day` | 每日发布上限，默认 1 条 |
 | `qzone_daily_enabled` | 是否每天随机自动发一条说说 |
-| `qzone_daily_window_start` | 每日随机窗口开始，默认 `09:00` |
-| `qzone_daily_window_end` | 每日随机窗口结束，默认 `23:00` |
-| `qzone_daily_catchup_minutes` | 离线恢复后的补发窗口，默认 30 分钟 |
-| `qzone_daily_max_chars` | 每日说说最大字符数，默认 150 |
-| `qzone_daily_themes` | 每日说说主题池，逗号分隔 |
 | `debug_log` | 详细日志；排查时临时开启 |
 
-> `config.yaml` 是当前生产配置参考，可能包含环境相关值；如果后续加入密钥，请改用环境变量或不要提交。
+> `config.yaml` 是示例配置，可能需要按你的机器人、时区和群环境调整；不要把真实密钥提交到公开仓库。
 
 ---
 
@@ -578,23 +515,19 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 
 - 旧提示词只约束“踢”，AI 可能不调用 `群管_撤回消息`
 - 撤回工具需要触发消息的 `message_id`
-- 本插件现在会：
-  - 提示词明确要求“先撤回，再踢”
-  - 把当前触发消息的 `message_id` 注入提示词
+- 本插件会提示“先撤回，再踢”，并把当前触发消息的 `message_id` 注入提示词
 - 检查日志：`rpc_exec: admin_delete_message` 与 `admin_kick_user`
 
 ### 为什么消息后面带 `True`？
 
-AI 调用了返回 bool 的工具（例如 `group_honor` 的 `set_user_special_title`），并把返回值拼进消息。  
-本插件现在：
+AI 调用了返回 bool 的工具（例如 `group_honor` 的 `set_user_special_title`），并把返回值拼进消息。本插件会：
 
 - 提示词禁止把工具返回值拼进聊天内容
 - 发送前清理中文后面拖尾的 `True` / `False` / `None`
 
 ### 为什么漏出 `SPLIT` / `TSPLIT`？
 
-AI 可能把 `[SPLIT]` 写成 `[TSPLIT]`。  
-本插件现在：
+AI 可能把 `[SPLIT]` 写成 `[TSPLIT]`。本插件会：
 
 - 识别 `[SPLIT]`、`[TSPLIT]`、大小写和空格变体
 - 发送前清理残留 `SPLIT` / `TSPLIT`
@@ -604,7 +537,7 @@ AI 可能把 `[SPLIT]` 写成 `[TSPLIT]`。
 
 按顺序检查：
 
-1. KONA 在该群实际是 owner/admin 吗？
+1. 机器人在该群实际是 owner/admin 吗？
 2. `XiaoJiu.group_admin` 是否启用？
 3. `ALLOW_GROUPS` 是否包含该群？
 4. `ENABLE_MUTE` / `ENABLE_DELETE_MSG` / `ENABLE_KICK` 是否开启？
@@ -659,23 +592,13 @@ for path in glob.glob('examples/*.yaml'):
 PY
 ```
 
-### 部署 + 热重载
-
-```bash
-./scripts/deploy.sh --reload
-```
-
-### 发布到 Gitea
+### 发布
 
 ```bash
 ./scripts/publish.sh "feat: describe your change"
 ```
 
-远程：
-
-```text
-ssh://git@192.168.3.20:2222/zhanghx/nekro-plugin-humanoid-chat.git
-```
+`scripts/deploy.sh` 和 `scripts/publish.sh` 是可选开发脚本，里面的容器路径、SSH 别名和远程仓库需要按你的环境修改。
 
 ### 修改约定
 
@@ -685,7 +608,7 @@ ssh://git@192.168.3.20:2222/zhanghx/nekro-plugin-humanoid-chat.git
   - README 的配置说明
 - 改行为时同步更新版本号（`NekroPlugin(version=...)`）和 `CHANGELOG.md`
 - **不要提交真实群档案**（含 QQ、昵称、群规）；只提交 `examples/` 脱敏模板
-- 修改群管插件包后，重启 `nekro_agent` 才能加载
+- 修改群管插件包后，重启你的 `nekro_agent` 容器才能加载
 - 提交前先跑 `scripts/check.sh`
 
 ---
@@ -699,5 +622,4 @@ ssh://git@192.168.3.20:2222/zhanghx/nekro-plugin-humanoid-chat.git
 ## 参考
 
 - [Nekro Agent](https://github.com/KroMiose/nekro-agent)
-- 本地参考插件：`emotions`、`nekro_favorability`、`group_admin`
-- 维护风格参考：`~/edacode/APBENV/K4APBGEN`（AGENTS.md + 脚本 + 清晰目录结构）
+- [本项目 GitHub 仓库](https://github.com/zhanghx/nekro-plugin-humanoid-chat)

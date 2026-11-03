@@ -87,9 +87,9 @@
 |---|---|---|
 | `group_profile_enabled` | `True` | 【本群档案】启用每群 YAML 档案：从插件数据目录的 group_profiles/<chat_key>.yaml 读取身份、人物、群规和管理策略。 |
 | `group_profile_dir` | 空 | 【本群档案】档案目录：留空使用插件数据目录下的 group_profiles；也可填绝对路径。 |
-| `group_role_cache_minutes` | `10` | 【本群档案】群角色缓存（分钟）：自动识别 KONA 在群里的 owner/admin/member 角色，缓存多久。 |
+| `group_role_cache_minutes` | `10` | 【本群档案】群角色缓存（分钟）：自动识别机器人在群里的 owner/admin/member 角色，缓存多久。 |
 | `group_profile_max_chars` | `2400` | 【本群档案】注入长度上限：本群档案注入提示词的最大字符数，超出会截断；群规较多时建议 2000 以上。 |
-| `group_profile_member_limit` | `8` | 【本群档案】自动生成关键人物数：生成器只把和 KONA 直接互动过的前 N 人写进 members。 |
+| `group_profile_member_limit` | `8` | 【本群档案】自动生成关键人物数：生成器只把和机器人直接互动过的前 N 人写进 members。 |
 | `group_profile_preserve_limit` | `12` | 【本群档案】保留人物上限：重新生成时，已有描述但本次未进前 N 的人会追加保留，members 总数不超过该值。 |
 | `group_profile_generator_lookback_days` | `30` | 【本群档案】生成器回看天数：生成器统计互动时回看最近多少天的聊天记录。 |
 | `group_learn_enabled` | `True` | 【群黑话】启用 `/group_learn` 候选提取，并把已批准词条注入提示词。 |
@@ -111,7 +111,7 @@
 |---|---|---|
 | `force_mute_default_seconds` | `600` | 【强制禁言】默认时长（秒）：force_mute 命令不写时长时使用的默认禁言秒数。 |
 | `force_mute_max_seconds` | `86400` | 【强制禁言】最大时长（秒）：force_mute 命令允许的最长禁言秒数，超出会被截断。 |
-| `force_mute_allow_admins` | `False` | 【强制禁言】允许禁言管理员：仅当 KONA 自己是群主时生效；默认不允许对管理员执行强制禁言。 |
+| `force_mute_allow_admins` | `False` | 【强制禁言】允许禁言管理员：仅当机器人自己是群主时生效；默认不允许对管理员执行强制禁言。 |
 
 ### 作息
 
@@ -190,7 +190,7 @@
 | `bangumi_enabled` | `True` | 【Bangumi】启用动漫搜索、条目详情、角色和每日放送工具。 |
 | `bangumi_access_token` | 空 | 【Bangumi】Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。 |
 | `bangumi_base_url` | `https://api.bgm.tv` | 【Bangumi】API 地址。 |
-| `bangumi_user_agent` | `humanoid_chat/3.5.0 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
+| `bangumi_user_agent` | `humanoid_chat/3.9.3 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
 | `bangumi_timeout_seconds` | `12` | 【Bangumi】单次请求超时（秒）。 |
 | `bangumi_search_limit` | `5` | 【Bangumi】搜索结果数。 |
 | `bangumi_character_limit` | `10` | 【Bangumi】角色结果数。 |

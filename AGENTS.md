@@ -1,10 +1,6 @@
 # AGENTS.md
 
-本仓库是 Nekro Agent 插件 `humanoid_chat` 的唯一源码仓库。真实运行位置在 NAS：
-
-```text
-/volume1/docker/nekro-agent/plugins/workdir/humanoid_chat.py
-```
+本仓库是 Nekro Agent 插件 `humanoid_chat` 的源码仓库。运行时把 `humanoid_chat.py` 放入你的 Nekro Agent 插件工作目录。
 
 ## 修改后必须做
 
@@ -14,7 +10,7 @@
    ./scripts/check.sh
    ```
 
-2. 部署到 NAS 并热重载：
+2. 部署到你的 Nekro Agent 环境并热重载：
 
    ```bash
    ./scripts/deploy.sh --reload
@@ -28,7 +24,7 @@
 
 ## 配置
 
-- `config.yaml` 是当前生产配置参考，不含密钥。
+- `config.yaml` 是示例配置，不含密钥。
 - `docs/CONFIG.md` 是 `HumanoidConfig` 全量字段说明。
 - 新增/删除配置字段时，同步更新：
   - `config.yaml`
@@ -39,10 +35,10 @@
 
 ## 群档案
 
-- 真实档案在 NAS 的 `plugin_data/afx.humanoid_chat/group_profiles/`。
+- 真实档案在 Nekro 数据目录的 `plugin_data/afx.humanoid_chat/group_profiles/`。
 - 仓库只提交 `examples/` 脱敏模板。
 - **不要提交真实群成员 QQ、昵称、群规或聊天内容。**
-- 生成器命令：`/group_profile_gen`；只统计与 KONA 直接互动的人，保留 `description` 和 `rules`。
+- 生成器命令：`/group_profile_gen`；只统计与机器人直接互动的人，保留 `description` 和 `rules`。
 
 ## 依赖边界
 
