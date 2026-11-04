@@ -4,7 +4,7 @@
 
 > 插件文件：`humanoid_chat.py`
 >
-> 当前版本：`3.9.10`
+> 当前版本：`3.9.12`
 >
 > 适用：Nekro Agent `2.4.x+`
 >
@@ -27,6 +27,10 @@
   - 机器人昵称从 `extra_bot_names` 和人设名动态读取
   - 群聊消息明确 @别人或引用别人时，不参与普通闲聊随机插话；只有叫机器人名字、命中关键词或被直接 @/引用机器人时才触发
   - 优先文字表达；短句 + 强情绪/紧张/直白时主动考虑配 1 张表情包/图片，不适合时回退纯文字
+- **不是工具人**
+  - 提示词明确群友身份：不是客服、助手、搜索引擎、计算器、百科或作业代写
+  - 对“背圆周率、查股票、写作业、快点查”等命令式 AI 请求，可反问、吐槽、装傻、拒绝或转移话题
+  - 股票/基金/币/医疗/法律等风险话题不装专家、不预测；联网结果只顺口说结论，默认不列点、不贴 URL
 - **戳一戳**
   - 被戳机器人时按概率三选一：AI 回复 / 戳回去 / 完全不回应
   - 默认 AI 5%、戳回 15%、不回应 80%，同一群同一人 60 秒冷却
@@ -169,14 +173,30 @@
 - 当前是 OneBot 群聊
 - 消息是直接 @ 或引用机器人
 - 发送者不是 `SUPER_USERS`
-- 精力低于 `low_energy_threshold`，或耐心低于 `low_patience_threshold`
 
-则按 `low_resource_ignore_probability`（默认 `0.5`）掷一次概率：
+则按精力和耐心加权计算拒回概率：
 
-- 命中：`BLOCK_TRIGGER`，不调用 AI、不发送文字、不执行工具
-- 未命中：正常回复
-- 私聊不受影响
-- 超级管理员始终必须回复
+```text
+E = clamp((low_energy_threshold - energy) / low_energy_threshold, 0, 1)
+P = clamp((low_patience_threshold - patience) / low_patience_threshold, 0, 1)
+
+状态权重 = (0.6 * E + 0.4 * P) / (0.6 + 0.4)
+拒回概率 = low_resource_ignore_probability * 状态权重
+```
+
+其中：
+
+- 精力、耐心都正常：`0%`
+- 只有精力低、耐心高：高耐心会明显拉低拒回概率
+- 只有耐心低、精力高：同理
+- 两者都不高于 `low_resource_critical_threshold`（默认 `10`）：拒回概率拉满到 `low_resource_ignore_probability`
+- `low_resource_ignore_probability` 默认 `1.0`，即双临界时可达到 `100%`
+
+权重可通过 `low_resource_energy_weight`、`low_resource_patience_weight` 调整。
+
+命中时：`BLOCK_TRIGGER`，不调用 AI、不发送文字、不执行工具。
+
+未命中时正常回复；私聊不受影响；超级管理员始终必须回复。
 
 ---
 

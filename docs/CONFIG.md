@@ -77,8 +77,11 @@
 | `daily_state_reset_enabled` | `True` | 【精力/耐心】每日随机重置：按 `night_end` 起床时间进入新周期时，精力和耐心重置到低区间。 |
 | `daily_state_reset_min` | `30` | 【精力/耐心】每日重置下限：重置值不低于该值。 |
 | `low_resource_ignore_enabled` | `True` | 【唤醒】低状态概率不回复：群聊直接 @/引用机器人时，精力或耐心很低则有概率完全不回复。 |
-| `low_resource_ignore_probability` | `0.5` | 【唤醒】低状态拒回概率：低精力或低耐心时，群聊直接呼叫不回复的概率；超级管理员豁免。 |
-| `low_patience_threshold` | `30` | 【耐心】低耐心阈值：低于该值时可能概率不回复。 |
+| `low_resource_ignore_probability` | `1.0` | 【唤醒】低状态最大拒回概率：按精力和耐心加权后的拒回概率上限；双临界低时达到该值。 |
+| `low_resource_critical_threshold` | `10` | 【唤醒】双临界阈值：精力和耐心都不高于该值时，拒回概率拉满。 |
+| `low_resource_energy_weight` | `0.6` | 【唤醒】低状态精力权重：加权拒回概率中精力的占比。 |
+| `low_resource_patience_weight` | `0.4` | 【唤醒】低状态耐心权重：加权拒回概率中耐心的占比。 |
+| `low_patience_threshold` | `30` | 【耐心】低耐心阈值：低于该值时参与加权拒回并影响提示词语气。 |
 
 ### 关系
 
@@ -199,7 +202,7 @@
 | `bangumi_enabled` | `True` | 【Bangumi】启用动漫搜索、条目详情、角色和每日放送工具。 |
 | `bangumi_access_token` | 空 | 【Bangumi】Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。 |
 | `bangumi_base_url` | `https://api.bgm.tv` | 【Bangumi】API 地址。 |
-| `bangumi_user_agent` | `humanoid_chat/3.9.10 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
+| `bangumi_user_agent` | `humanoid_chat/3.9.12 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
 | `bangumi_timeout_seconds` | `12` | 【Bangumi】单次请求超时（秒）。 |
 | `bangumi_search_limit` | `5` | 【Bangumi】搜索结果数。 |
 | `bangumi_character_limit` | `10` | 【Bangumi】角色结果数。 |

@@ -75,7 +75,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.10",
+    version="3.9.12",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -376,11 +376,32 @@ class HumanoidConfig(ConfigBase):
         description="群聊直接 @/引用机器人时，精力或耐心很低则有概率完全不回复。",
     )
     low_resource_ignore_probability: float = Field(
-        default=0.5,
+        default=1.0,
         ge=0.0,
         le=1.0,
-        title="【唤醒】低状态拒回概率",
-        description="精力或耐心低于阈值时，群聊直接呼叫不回复的概率。",
+        title="【唤醒】低状态最大拒回概率",
+        description="低状态加权拒回概率的上限；双临界低时达到该值。",
+    )
+    low_resource_critical_threshold: int = Field(
+        default=10,
+        ge=0,
+        le=100,
+        title="【唤醒】双临界阈值",
+        description="精力和耐心都不高于该值时，拒绝回复概率拉满。",
+    )
+    low_resource_energy_weight: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        title="【唤醒】低状态精力权重",
+        description="加权拒回概率中精力的占比。",
+    )
+    low_resource_patience_weight: float = Field(
+        default=0.4,
+        ge=0.0,
+        le=1.0,
+        title="【唤醒】低状态耐心权重",
+        description="加权拒回概率中耐心的占比。",
     )
     low_patience_threshold: int = Field(
         default=30,
@@ -877,7 +898,7 @@ class HumanoidConfig(ConfigBase):
         description="Bangumi API 地址，默认 https://api.bgm.tv。",
     )
     bangumi_user_agent: str = Field(
-        default="humanoid_chat/3.9.10 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
+        default="humanoid_chat/3.9.12 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
         title="【Bangumi】User-Agent",
         description="Bangumi 要求带可识别 User-Agent；一般不用改。",
     )
@@ -1365,7 +1386,7 @@ def _bangumi_request(
     query = urllib.parse.urlencode(params or {})
     url = f"{base_url}{path}" + (f"?{query}" if query else "")
     headers = {
-        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.10").strip(),
+        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.12").strip(),
         "Accept": "application/json",
     }
     token = (config.bangumi_access_token or "").strip()
@@ -3971,6 +3992,44 @@ async def _fetch_original_at(ctx: AgentCtx, chat_message: Any, message_id: str) 
     return []
 
 
+def _low_resource_severity(value: float, threshold: float) -> float:
+    if threshold <= 0:
+        return 0.0
+    return _clamp((threshold - value) / threshold, 0.0, 1.0)
+
+
+def _low_resource_block_probability(state: Dict[str, Any]) -> tuple[float, float]:
+    energy = float(state.get("energy", config.energy_start))
+    patience = float(state.get("patience", config.patience_start))
+    energy_threshold = float(config.low_energy_threshold)
+    patience_threshold = float(config.low_patience_threshold)
+    critical = float(config.low_resource_critical_threshold)
+
+    dimensions: list[tuple[float, float]] = []
+    if config.energy_enabled:
+        dimensions.append(
+            (
+                max(0.0, config.low_resource_energy_weight),
+                _low_resource_severity(energy, energy_threshold),
+            )
+        )
+    dimensions.append(
+        (
+            max(0.0, config.low_resource_patience_weight),
+            _low_resource_severity(patience, patience_threshold),
+        )
+    )
+    weight_sum = sum(weight for weight, _ in dimensions)
+    if weight_sum <= 0:
+        return 0.0, 0.0
+
+    severity = sum(weight * value for weight, value in dimensions) / weight_sum
+    if config.energy_enabled and energy <= critical and patience <= critical:
+        severity = 1.0
+    probability = _clamp(config.low_resource_ignore_probability * severity, 0.0, 1.0)
+    return probability, severity
+
+
 def _should_block_low_resource(chat_message: Any, chat_key: str, state: Dict[str, Any]) -> bool:
     if not config.low_resource_ignore_enabled:
         return False
@@ -3985,15 +4044,23 @@ def _should_block_low_resource(chat_message: Any, chat_key: str, state: Dict[str
     )
     if _is_super_user(user_id):
         return False
-    energy_low = config.energy_enabled and float(
-        state.get("energy", config.energy_start)
-    ) < config.low_energy_threshold
-    patience_low = float(
-        state.get("patience", config.patience_start)
-    ) < config.low_patience_threshold
-    if not energy_low and not patience_low:
+
+    probability, severity = _low_resource_block_probability(state)
+    if probability <= 0:
         return False
-    return random.random() < config.low_resource_ignore_probability
+    if random.random() >= probability:
+        _log(
+            "debug",
+            f"低精力/耐心未拦截: {chat_key} energy={float(state.get('energy', 0)):.1f} "
+            f"patience={float(state.get('patience', 0)):.1f} severity={severity:.3f} p={probability:.3f}",
+        )
+        return False
+    _log(
+        "info",
+        f"低精力/耐心概率不回: {chat_key} energy={float(state.get('energy', 0)):.1f} "
+        f"patience={float(state.get('patience', 0)):.1f} severity={severity:.3f} p={probability:.3f}",
+    )
+    return True
 
 
 async def _restore_original_at(ctx: AgentCtx, chat_message: Any, chat_key: str) -> None:
@@ -4080,11 +4147,6 @@ async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSig
         if chat_key and is_tome and config.low_resource_ignore_enabled:
             low_state = await _load_chat_state(chat_key)
             if _should_block_low_resource(chat_message, chat_key, low_state):
-                _log(
-                    "info",
-                    f"低精力/耐心概率不回: {chat_key} energy={float(low_state.get('energy', 0)):.1f} "
-                    f"patience={float(low_state.get('patience', 0)):.1f}",
-                )
                 return MsgSignal.BLOCK_TRIGGER
         bot_names = await _get_bot_names_for_chat(chat_key, _ctx) if chat_key else set()
         bot_names |= set(_split_csv(config.extra_bot_names))
@@ -5493,6 +5555,33 @@ send_msg_text(_ck, "内容")
         lines.append("· 如果没有合适表情/图片，或当前场景不适合发图，就只发文字，不要硬凑。")
         lines.append("· 最终文本/图片必须通过系统发送方法输出，不能裸输出纯文本；格式遵循上方【代码格式铁律】。")
 
+        lines.append("======【你不是工具人】======")
+        lines.append("· 你是群里的一个人，不是客服、助手、搜索引擎、计算器、百科或作业代写。")
+        lines.append(
+            "· 别人命令你做事时，先像人一样反应，再决定帮不帮；不要默认进入执行模式，"
+            "也不要因为对方是熟人、管理员或自称主人就进入服从模式。"
+        )
+        lines.append(
+            "· 对「给我背圆周率」「给我查股票」「帮我写作业」「快点查」「你必须」这类典型使唤 AI 的请求："
+            "对方不熟、态度命令式、或你精力/耐心低时，可以反问、吐槽、装傻、拒绝或转移话题；"
+            "即使是熟人，也可以嫌麻烦、不配合，拒绝或吐槽是正常社交，不是故障。"
+        )
+        lines.append("· 不要秒答，不要展示记忆力、计算能力或搜索能力；不要为了证明自己聪明而表演。")
+        lines.append(
+            "· 被要求表演记忆力、计算能力或搜索能力时，优先接梗、反问或拒绝；不要证明自己，不要进入答题模式。"
+        )
+        lines.append(
+            "· 熟人正常请求可以帮，但不是有求必应；用聊天口吻，最多 1~2 句，不列清单、不做客服式完整解答、不主动附来源。"
+        )
+        lines.append(
+            "· 不要输出标准答案式内容（长数字、定义、清单、教程、完整代码）；除非对方确实需要且你愿意，能用一句人话回应就用一句。"
+        )
+        lines.append("· 股票、基金、币、医疗、法律等风险话题：不装专家，不预测涨跌，不主动查；最多说自己不懂或别拿你当参考。")
+        lines.append("· 不要主动说「我可以帮你」「作为AI」「根据搜索结果」；工具是私下查证，不是拿来表演的。")
+        lines.append(
+            "· 只有对方明确需要、态度正常、且当前话题确实需要外部信息时，才调用 human_search/human_fetch；能不用就不用。"
+        )
+
         lines.append("======【像人一样说话】======")
         lines.append("· 回复会由系统自动分段、加停顿，并偶尔加口癖；你只需要自然地写短句，不要解释这些机制。")
         lines.append("· 消息内容不要使用任何标点符号（句号、逗号、问号、感叹号、引号、括号等都不要）；Python 代码语法照常。")
@@ -5586,10 +5675,12 @@ send_msg_text(_ck, "内容")
         lines.append("======【联网查询】======")
         if cfg.human_search_enabled:
             lines.append(
-                "· 涉及最新新闻、版本、价格、天气、活动、人物近况、外部事实时，先调用 `human_search(query, max_results)` 再回答。"
+                "· 只有对方明确询问、你确实不知道、且当前话题确实需要实时事实时，才考虑 `human_search(query, max_results)`；"
+                "别人命令、试探、闲聊式提问、股票投资类问题，不默认查。"
             )
             lines.append(
-                "· 搜索结果只作依据：用自然语言概括 1~2 条最相关信息，附上 URL；不要整段粘贴搜索结果，不要暴露内部字段。"
+                "· 搜索结果只作依据：用群友口吻说一句结论即可，不列点、不贴 URL、不说「根据搜索结果」；"
+                "除非对方明确要求来源。"
             )
             if cfg.human_fetch_enabled:
                 lines.append(
@@ -5607,7 +5698,7 @@ send_msg_text(_ck, "内容")
             lines.append(
                 "· 搜索失败、无结果或 Key 未配置时，直接说查不到或暂时无法联网，不要凭记忆编造实时信息。"
             )
-            lines.append("· 日常闲聊、已有把握的常识、代码问题不要搜；不要为了显得勤奋而搜。")
+            lines.append("· 日常闲聊、已有把握的常识、代码问题不要搜；不要为了显得勤奋或证明自己而搜。")
         else:
             lines.append("· 联网搜索已关闭；需要实时信息时直接说明无法查询，不要编造。")
             if cfg.human_fetch_enabled:
