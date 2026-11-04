@@ -75,7 +75,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.9",
+    version="3.9.10",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -877,7 +877,7 @@ class HumanoidConfig(ConfigBase):
         description="Bangumi API 地址，默认 https://api.bgm.tv。",
     )
     bangumi_user_agent: str = Field(
-        default="humanoid_chat/3.9.9 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
+        default="humanoid_chat/3.9.10 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
         title="【Bangumi】User-Agent",
         description="Bangumi 要求带可识别 User-Agent；一般不用改。",
     )
@@ -1365,7 +1365,7 @@ def _bangumi_request(
     query = urllib.parse.urlencode(params or {})
     url = f"{base_url}{path}" + (f"?{query}" if query else "")
     headers = {
-        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.9").strip(),
+        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.10").strip(),
         "Accept": "application/json",
     }
     token = (config.bangumi_access_token or "").strip()
@@ -3778,8 +3778,8 @@ if NONEBOT_AVAILABLE:
                 is_to_me = True
 
             chat_key = f"onebot_v11-group_{group_id}" if group_id else f"onebot_v11-private_{user_id}"
+            original_at: List[Tuple[str, str]] = []
             try:
-                original_at: List[Tuple[str, str]] = []
                 for seg in getattr(event, "original_message", None) or []:
                     if str(getattr(seg, "type", "")) != "at":
                         continue
@@ -3801,6 +3801,15 @@ if NONEBOT_AVAILABLE:
                         _purge_original_at_cache(now)
             except Exception as exc:
                 _log("debug", f"缓存原始 AT 失败: {exc}")
+            reply_to_other = False
+            try:
+                reply = getattr(event, "reply", None)
+                reply_sender = getattr(reply, "sender", None) if reply is not None else None
+                reply_user_id = str(getattr(reply_sender, "user_id", "") or "").strip()
+                reply_to_other = bool(reply_user_id and reply_user_id != self_id)
+            except Exception:
+                reply_to_other = False
+            explicit_other_recipient = bool(original_at) or reply_to_other
             _LAST_INBOUND_TS[chat_key] = _now()
             if msg_id:
                 _LAST_INBOUND_MSG_ID[chat_key] = (_now(), str(msg_id))
@@ -3868,6 +3877,9 @@ if NONEBOT_AVAILABLE:
                         reason = f"提及关注话题「{word}」"
                         target_prob = config.keyword_reply_probability
                         break
+            if not reason and group_id and explicit_other_recipient:
+                _log("debug", f"跳过他人 @/引用消息的普通闲聊触发: {chat_key}")
+                return
             if not reason:
                 reason = "普通闲聊"
                 target_prob = config.reply_probability
