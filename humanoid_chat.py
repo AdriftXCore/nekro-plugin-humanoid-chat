@@ -50,6 +50,7 @@ from nekro_agent.api.schemas import AgentCtx
 from nekro_agent.api.signal import MsgSignal
 from nekro_agent.models.db_chat_channel import DBChatChannel
 from nekro_agent.models.db_chat_message import DBChatMessage
+from nekro_agent.schemas.chat_message import ChatMessageSegmentAt, ChatMessageSegmentType
 
 try:
     import nonebot
@@ -74,7 +75,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.5",
+    version="3.9.7",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -839,7 +840,7 @@ class HumanoidConfig(ConfigBase):
         description="Bangumi API 地址，默认 https://api.bgm.tv。",
     )
     bangumi_user_agent: str = Field(
-        default="humanoid_chat/3.9.5 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
+        default="humanoid_chat/3.9.7 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
         title="【Bangumi】User-Agent",
         description="Bangumi 要求带可识别 User-Agent；一般不用改。",
     )
@@ -1327,7 +1328,7 @@ def _bangumi_request(
     query = urllib.parse.urlencode(params or {})
     url = f"{base_url}{path}" + (f"?{query}" if query else "")
     headers = {
-        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.5").strip(),
+        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.7").strip(),
         "Accept": "application/json",
     }
     token = (config.bangumi_access_token or "").strip()
@@ -1962,6 +1963,8 @@ _QZONE_DAILY_TASK: Optional[asyncio.Task] = None
 _LAST_MEDIA_SENT: Dict[str, float] = {}
 _LAST_STICKER_HINT: Dict[str, float] = {}
 _LAST_POKE_REPLY: Dict[str, float] = {}
+_ORIGINAL_AT_CACHE: Dict[str, Tuple[float, List[Tuple[str, str]]]] = {}
+_ORIGINAL_AT_TTL_SECONDS = 60
 _GROUP_PROFILE_CACHE: Dict[str, Tuple[float, GroupProfile]] = {}
 _BOT_ROLE_CACHE: Dict[str, Tuple[float, str]] = {}
 
@@ -3705,6 +3708,29 @@ if NONEBOT_AVAILABLE:
                 is_to_me = True
 
             chat_key = f"onebot_v11-group_{group_id}" if group_id else f"onebot_v11-private_{user_id}"
+            try:
+                original_at: List[Tuple[str, str]] = []
+                for seg in getattr(event, "original_message", None) or []:
+                    if str(getattr(seg, "type", "")) != "at":
+                        continue
+                    data = getattr(seg, "data", {}) or {}
+                    target_id = str(data.get("qq") or "").strip()
+                    if not target_id or target_id == self_id:
+                        continue
+                    nickname = str(data.get("name") or data.get("nickname") or "").strip()
+                    original_at.append((target_id, nickname or target_id))
+                if original_at:
+                    now = _now()
+                    _ORIGINAL_AT_CACHE[f"{chat_key}:{msg_id_str}"] = (
+                        now + _ORIGINAL_AT_TTL_SECONDS,
+                        original_at,
+                    )
+                    if len(_ORIGINAL_AT_CACHE) > 1000:
+                        _ORIGINAL_AT_CACHE.clear()
+                    else:
+                        _purge_original_at_cache(now)
+            except Exception as exc:
+                _log("debug", f"缓存原始 AT 失败: {exc}")
             _LAST_INBOUND_TS[chat_key] = _now()
             if msg_id:
                 _LAST_INBOUND_MSG_ID[chat_key] = (_now(), str(msg_id))
@@ -3822,6 +3848,92 @@ if NONEBOT_AVAILABLE:
     setattr(_catch_nonebot_message_event, "_humanoid_instance", INSTANCE_ID)
 
 
+def _purge_original_at_cache(now: Optional[float] = None) -> None:
+    current = _now() if now is None else now
+    for key, (expires_at, _) in list(_ORIGINAL_AT_CACHE.items()):
+        if expires_at < current:
+            _ORIGINAL_AT_CACHE.pop(key, None)
+
+
+def _extract_original_at(segments: Any, self_id: str) -> List[Tuple[str, str]]:
+    result: List[Tuple[str, str]] = []
+    for seg in segments or []:
+        if isinstance(seg, dict):
+            segment_type = seg.get("type")
+            data = seg.get("data") or {}
+        else:
+            segment_type = getattr(seg, "type", "")
+            data = getattr(seg, "data", {}) or {}
+        if str(segment_type) != "at":
+            continue
+        target_id = str(data.get("qq") or "").strip()
+        if not target_id or target_id == self_id:
+            continue
+        nickname = str(data.get("name") or data.get("nickname") or "").strip()
+        result.append((target_id, nickname or target_id))
+    return result
+
+
+async def _fetch_original_at(ctx: AgentCtx, chat_message: Any, message_id: str) -> List[Tuple[str, str]]:
+    ext_data = getattr(chat_message, "ext_data", {}) or {}
+    if not isinstance(ext_data, dict) or not ext_data.get("ref_msg_id"):
+        return []
+    try:
+        bot = await ctx.get_onebot_v11_bot()
+        result = await bot.call_api("get_msg", message_id=int(message_id))
+        self_id = str(getattr(bot, "self_id", "") or "")
+        if isinstance(result, dict):
+            return _extract_original_at(result.get("message"), self_id)
+    except Exception as exc:
+        _log("debug", f"get_msg 兜底获取 AT 失败: {message_id}: {type(exc).__name__}: {exc}")
+    return []
+
+
+async def _restore_original_at(ctx: AgentCtx, chat_message: Any, chat_key: str) -> None:
+    message_id = str(getattr(chat_message, "message_id", "") or "").strip()
+    if not message_id:
+        return
+    now = _now()
+    cached = _ORIGINAL_AT_CACHE.pop(f"{chat_key}:{message_id}", None)
+    if cached is None:
+        return
+    if cached[0] >= now:
+        original_at = cached[1]
+    else:
+        original_at = await _fetch_original_at(ctx, chat_message, message_id)
+    if not original_at:
+        return
+    content_data = list(getattr(chat_message, "content_data", None) or [])
+    existing = {
+        str(getattr(seg, "target_platform_userid", "") or "")
+        for seg in content_data
+        if str(getattr(seg, "type", "")) == "at"
+    }
+    added: List[Tuple[str, str]] = []
+    for target_id, nickname in original_at:
+        if target_id in existing:
+            continue
+        content_data.insert(
+            0,
+            ChatMessageSegmentAt(
+                type=ChatMessageSegmentType.AT,
+                text="",
+                target_platform_userid=target_id,
+                target_nickname=nickname,
+            ),
+        )
+        existing.add(target_id)
+        added.append((target_id, nickname))
+    if not added:
+        return
+    chat_message.content_data = content_data
+    prefix = "".join(f"[@id:{target_id};nickname:{nickname}@]" for target_id, nickname in added)
+    content_text = str(getattr(chat_message, "content_text", "") or "")
+    if prefix and prefix not in content_text:
+        chat_message.content_text = prefix + content_text
+    _log("debug", f"补回原始 AT: {chat_key} msg={message_id} targets={[item[0] for item in added]}")
+
+
 @plugin.mount_on_user_message()
 async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSignal:
     """处理引用图片硬拦截与夜间免打扰。"""
@@ -3829,6 +3941,8 @@ async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSig
         chat_key = str(getattr(chat_message, "chat_key", "") or "")
         chat_type = str(getattr(chat_message, "chat_type", "") or "")
         is_tome = bool(getattr(chat_message, "is_tome", False))
+        content_text = str(getattr(chat_message, "content_text", "") or "")
+        await _restore_original_at(_ctx, chat_message, chat_key)
         content_text = str(getattr(chat_message, "content_text", "") or "")
         if chat_key and _is_poke_message(chat_message):
             if not is_tome:
@@ -5653,6 +5767,7 @@ async def clean_up() -> str:
     _LAST_MEDIA_SENT.clear()
     _LAST_STICKER_HINT.clear()
     _LAST_POKE_REPLY.clear()
+    _ORIGINAL_AT_CACHE.clear()
     _GROUP_PROFILE_CACHE.clear()
     _BOT_ROLE_CACHE.clear()
     return "cleaned"
