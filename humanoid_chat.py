@@ -74,7 +74,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.3",
+    version="3.9.5",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -122,6 +122,26 @@ class HumanoidConfig(ConfigBase):
         default=True,
         title="【唤醒】@ 与私聊必回",
         description="被 @ 或私聊时无视概率与冷却，必定唤醒 AI。",
+    )
+    poke_reply_ai_probability: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=1.0,
+        title="【唤醒】被戳后 AI 回复概率",
+        description="被别人戳一戳后，允许 AI 正常接话的概率；设为 0 可完全避免戳一戳消耗 token。",
+    )
+    poke_reply_poke_probability: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=1.0,
+        title="【唤醒】被戳后戳回去概率",
+        description="被别人戳一戳后，直接戳回去的概率；不调用 LLM。与 AI 概率相加超过 1 时会按比例归一化。",
+    )
+    poke_reply_cooldown_seconds: int = Field(
+        default=60,
+        ge=0,
+        title="【唤醒】戳一戳响应冷却（秒）",
+        description="同一群同一人连续戳时，多少秒内只处理一次；0 表示不限制。",
     )
     ai_self_decision: bool = Field(
         default=True,
@@ -819,7 +839,7 @@ class HumanoidConfig(ConfigBase):
         description="Bangumi API 地址，默认 https://api.bgm.tv。",
     )
     bangumi_user_agent: str = Field(
-        default="humanoid_chat/3.9.3 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
+        default="humanoid_chat/3.9.5 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
         title="【Bangumi】User-Agent",
         description="Bangumi 要求带可识别 User-Agent；一般不用改。",
     )
@@ -1307,7 +1327,7 @@ def _bangumi_request(
     query = urllib.parse.urlencode(params or {})
     url = f"{base_url}{path}" + (f"?{query}" if query else "")
     headers = {
-        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.3").strip(),
+        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.5").strip(),
         "Accept": "application/json",
     }
     token = (config.bangumi_access_token or "").strip()
@@ -1562,6 +1582,51 @@ def _quoted_no_link_reply(summary: str) -> str:
     if title:
         return f"你引用的是「{title}」，没有链接内容，我不确定你指什么。"
     return "你引用的消息没有链接内容，我不确定你指什么。"
+
+
+def _is_poke_message(message: Any) -> bool:
+    segments = getattr(message, "content_data", None) or []
+    for segment in segments:
+        if isinstance(segment, dict):
+            segment_type = segment.get("type")
+        else:
+            segment_type = getattr(segment, "type", "")
+        if str(segment_type) == "poke":
+            return True
+    return False
+
+
+def _choose_poke_action() -> str:
+    ai_probability = max(0.0, min(1.0, float(config.poke_reply_ai_probability)))
+    poke_probability = max(0.0, min(1.0, float(config.poke_reply_poke_probability)))
+    total = ai_probability + poke_probability
+    if total <= 0:
+        return "none"
+    if total > 1:
+        ai_probability /= total
+        poke_probability /= total
+    roll = random.random()
+    if roll < ai_probability:
+        return "ai"
+    if roll < ai_probability + poke_probability:
+        return "poke"
+    return "none"
+
+
+async def _send_poke_back(ctx: AgentCtx, chat_message: Any, chat_key: str) -> bool:
+    if not chat_key.startswith("onebot_v11-group_"):
+        return False
+    target_user_id = str(getattr(chat_message, "platform_userid", "") or "").strip()
+    group_id = chat_key.split("group_", 1)[-1]
+    if not target_user_id.isdigit() or not group_id.isdigit():
+        return False
+    try:
+        bot = await ctx.get_onebot_v11_bot()
+        await bot.call_api("group_poke", group_id=int(group_id), user_id=int(target_user_id))
+        return True
+    except Exception as exc:
+        _log("warning", f"戳回去失败: {type(exc).__name__}: {exc}")
+        return False
 
 
 def _red_packet_info(message: Any) -> Optional[Dict[str, str]]:
@@ -1896,6 +1961,7 @@ _BG_TASKS: Dict[str, asyncio.Task] = {}
 _QZONE_DAILY_TASK: Optional[asyncio.Task] = None
 _LAST_MEDIA_SENT: Dict[str, float] = {}
 _LAST_STICKER_HINT: Dict[str, float] = {}
+_LAST_POKE_REPLY: Dict[str, float] = {}
 _GROUP_PROFILE_CACHE: Dict[str, Tuple[float, GroupProfile]] = {}
 _BOT_ROLE_CACHE: Dict[str, Tuple[float, str]] = {}
 
@@ -3764,6 +3830,32 @@ async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSig
         chat_type = str(getattr(chat_message, "chat_type", "") or "")
         is_tome = bool(getattr(chat_message, "is_tome", False))
         content_text = str(getattr(chat_message, "content_text", "") or "")
+        if chat_key and _is_poke_message(chat_message):
+            if not is_tome:
+                _log("debug", f"忽略非机器人目标的戳一戳: {chat_key}")
+                return MsgSignal.BLOCK_TRIGGER
+            user_id = str(
+                getattr(chat_message, "platform_userid", "")
+                or getattr(chat_message, "sender_id", "")
+                or ""
+            )
+            cooldown_key = f"{chat_key}:{user_id}"
+            now = _now()
+            cooldown = max(0, int(config.poke_reply_cooldown_seconds))
+            if cooldown > 0 and now - _LAST_POKE_REPLY.get(cooldown_key, 0.0) < cooldown:
+                _log("debug", f"戳一戳冷却中: {cooldown_key}")
+                return MsgSignal.BLOCK_TRIGGER
+            _LAST_POKE_REPLY[cooldown_key] = now
+            action = _choose_poke_action()
+            if action == "ai":
+                _log("info", f"戳一戳处理: action=ai user={user_id}")
+                return MsgSignal.CONTINUE
+            if action == "poke":
+                sent = await _send_poke_back(_ctx, chat_message, chat_key)
+                _log("info", f"戳一戳处理: action=poke sent={sent} user={user_id}")
+                return MsgSignal.BLOCK_TRIGGER
+            _log("debug", f"戳一戳处理: action=none user={user_id}")
+            return MsgSignal.BLOCK_TRIGGER
         bot_names = await _get_bot_names_for_chat(chat_key, _ctx) if chat_key else set()
         bot_names |= set(_split_csv(config.extra_bot_names))
         content_lower = content_text.lower()
@@ -5560,6 +5652,7 @@ async def clean_up() -> str:
     _SEND_LOCKS.clear()
     _LAST_MEDIA_SENT.clear()
     _LAST_STICKER_HINT.clear()
+    _LAST_POKE_REPLY.clear()
     _GROUP_PROFILE_CACHE.clear()
     _BOT_ROLE_CACHE.clear()
     return "cleaned"

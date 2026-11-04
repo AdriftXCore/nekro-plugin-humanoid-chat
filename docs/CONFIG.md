@@ -14,6 +14,9 @@
 | `reply_cd_seconds` | `30` | 【唤醒】群聊插话冷却（秒）：非直接呼叫的主动接话后，群内冷却时间。直接叫名字/@/私聊不受此限制。 |
 | `always_reply_when_mentioned` | `True` | 【唤醒】@ 与私聊必回：被 @ 或私聊时无视概率与冷却，必定唤醒 AI。 |
 | `ai_self_decision` | `True` | 【唤醒】AI 自主决定是否插话：被话题/名字唤醒后，由 AI 结合上下文判断；觉得突兀可以保持沉默。 |
+| `poke_reply_ai_probability` | `0.05` | 【唤醒】被戳后 AI 回复概率；设为 `0` 可完全避免戳一戳消耗 token。 |
+| `poke_reply_poke_probability` | `0.15` | 【唤醒】被戳后戳回去概率；不调用 LLM。与 AI 概率相加超过 1 时按比例归一化。 |
+| `poke_reply_cooldown_seconds` | `60` | 【唤醒】同一群同一人的戳一戳响应冷却（秒）；`0` 表示不限制。 |
 
 ### 节奏
 
@@ -190,7 +193,7 @@
 | `bangumi_enabled` | `True` | 【Bangumi】启用动漫搜索、条目详情、角色和每日放送工具。 |
 | `bangumi_access_token` | 空 | 【Bangumi】Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。 |
 | `bangumi_base_url` | `https://api.bgm.tv` | 【Bangumi】API 地址。 |
-| `bangumi_user_agent` | `humanoid_chat/3.9.3 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
+| `bangumi_user_agent` | `humanoid_chat/3.9.5 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
 | `bangumi_timeout_seconds` | `12` | 【Bangumi】单次请求超时（秒）。 |
 | `bangumi_search_limit` | `5` | 【Bangumi】搜索结果数。 |
 | `bangumi_character_limit` | `10` | 【Bangumi】角色结果数。 |

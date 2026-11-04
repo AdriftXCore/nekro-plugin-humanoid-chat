@@ -4,7 +4,7 @@
 
 > 插件文件：`humanoid_chat.py`
 >
-> 当前版本：`3.9.3`
+> 当前版本：`3.9.5`
 >
 > 适用：Nekro Agent `2.4.x+`
 >
@@ -26,6 +26,10 @@
   - 禁止 Emoji、颜文字、句尾 `~` / `呀` / `呢` / `哦` 和 AI 腔
   - 机器人昵称从 `extra_bot_names` 和人设名动态读取
   - 优先文字表达；短句 + 强情绪/紧张/直白时主动考虑配 1 张表情包/图片，不适合时回退纯文字
+- **戳一戳**
+  - 被戳机器人时按概率三选一：AI 回复 / 戳回去 / 完全不回应
+  - 默认 AI 5%、戳回 15%、不回应 80%，同一群同一人 60 秒冷却
+  - 戳回去不调用 LLM；不回应也不消耗 token
 - **拟真瑕疵**
   - 口癖、省略号、重复字、偶发错字后更正
   - 不影响链接、代码、`[@id:...@]` 提及和文件路径
@@ -477,6 +481,9 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | --- | --- |
 | `extra_bot_names` | 额外昵称，逗号分隔 |
 | `trigger_keywords` | 感兴趣的话题词 |
+| `poke_reply_ai_probability` | 被戳后 AI 回复概率，默认 0.05 |
+| `poke_reply_poke_probability` | 被戳后戳回去概率，默认 0.15 |
+| `poke_reply_cooldown_seconds` | 戳一戳响应冷却，默认 60 秒 |
 | `min_segment_gap` | 分段最小间隔，默认 2 秒 |
 | `segment_delay_min/max` | 每段基础随机延迟 |
 | `max_segments` | 最多分几段 |

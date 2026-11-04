@@ -5,6 +5,9 @@ reply_probability: 0.05
 reply_cd_seconds: 30
 always_reply_when_mentioned: true
 ai_self_decision: true
+poke_reply_ai_probability: 0.05
+poke_reply_poke_probability: 0.15
+poke_reply_cooldown_seconds: 60
 auto_split: true
 auto_split_min_chars: 18
 min_segments: 1
@@ -116,7 +119,7 @@ quoted_link_always_fetch: true
 bangumi_enabled: true
 bangumi_access_token: ''
 bangumi_base_url: https://api.bgm.tv
-bangumi_user_agent: humanoid_chat/3.9.3 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
+bangumi_user_agent: humanoid_chat/3.9.5 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
 bangumi_timeout_seconds: 12
 bangumi_search_limit: 5
 bangumi_character_limit: 10
