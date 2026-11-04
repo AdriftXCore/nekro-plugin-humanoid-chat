@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.9.8 - 2026-11-04
+
+- 新增每日随机状态重置：按 `night_end` 起床时间划分周期，首次读取时把精力和耐心随机重置到 `daily_state_reset_min`（默认 30）到各自默认值之间。
+- 新增低状态概率拒回：群聊直接 @/引用机器人时，如果精力或耐心低于阈值，有概率完全不触发 AI；超级管理员始终豁免，私聊不受影响。
+- 新增 `daily_state_reset_enabled`、`daily_state_reset_min`、`low_resource_ignore_enabled`、`low_resource_ignore_probability`、`low_patience_threshold` 配置。
+- 版本升至 `3.9.8`。
+
 ## 3.9.7 - 2026-11-04
 
 - 原始 AT 缓存增加 60 秒 TTL，过期条目不再无限保留。

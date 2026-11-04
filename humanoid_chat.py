@@ -75,7 +75,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.7",
+    version="3.9.8",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -351,6 +351,37 @@ class HumanoidConfig(ConfigBase):
         ge=1.0,
         title="【精力】低精力延迟倍率",
         description="低精力时，打字延迟乘以该值。",
+    )
+    daily_state_reset_enabled: bool = Field(
+        default=True,
+        title="【精力/耐心】每日随机重置",
+        description="按起床时间进入新一天时，把精力和耐心重置到低区间。",
+    )
+    daily_state_reset_min: int = Field(
+        default=30,
+        ge=0,
+        le=100,
+        title="【精力/耐心】每日重置下限",
+        description="每日随机重置的最低值；默认不低于 30。",
+    )
+    low_resource_ignore_enabled: bool = Field(
+        default=True,
+        title="【唤醒】低状态时概率不回复",
+        description="群聊直接 @/引用机器人时，精力或耐心很低则有概率完全不回复。",
+    )
+    low_resource_ignore_probability: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        title="【唤醒】低状态拒回概率",
+        description="精力或耐心低于阈值时，群聊直接呼叫不回复的概率。",
+    )
+    low_patience_threshold: int = Field(
+        default=30,
+        ge=0,
+        le=100,
+        title="【耐心】低耐心阈值",
+        description="低于该值时，群聊直接呼叫可能概率不回复，并影响提示词语气。",
     )
     patience_start: int = Field(
         default=70,
@@ -840,7 +871,7 @@ class HumanoidConfig(ConfigBase):
         description="Bangumi API 地址，默认 https://api.bgm.tv。",
     )
     bangumi_user_agent: str = Field(
-        default="humanoid_chat/3.9.7 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
+        default="humanoid_chat/3.9.8 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
         title="【Bangumi】User-Agent",
         description="Bangumi 要求带可识别 User-Agent；一般不用改。",
     )
@@ -1328,7 +1359,7 @@ def _bangumi_request(
     query = urllib.parse.urlencode(params or {})
     url = f"{base_url}{path}" + (f"?{query}" if query else "")
     headers = {
-        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.7").strip(),
+        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.8").strip(),
         "Accept": "application/json",
     }
     token = (config.bangumi_access_token or "").strip()
@@ -2107,6 +2138,33 @@ def _prepare_qzone_images(images: List[str]) -> List[str]:
     return prepared
 
 
+def _daily_reset_cycle(now_local: Optional[datetime] = None) -> str:
+    now = now_local or _local_now()
+    wake_hour, wake_minute = _parse_hhmm(config.night_end, (7, 30))
+    wake_minutes = wake_hour * 60 + wake_minute
+    now_minutes = now.hour * 60 + now.minute
+    cycle_date = now.date() if now_minutes >= wake_minutes else (now.date() - timedelta(days=1))
+    return cycle_date.isoformat()
+
+
+async def _maybe_daily_reset_chat_state(chat_key: str, state: Dict[str, Any]) -> bool:
+    cycle = _daily_reset_cycle()
+    current = str(state.get("daily_reset_cycle") or "").strip()
+    if not current:
+        state["daily_reset_cycle"] = cycle
+        return True
+    if not config.daily_state_reset_enabled or current == cycle:
+        return False
+    low = max(0, min(100, config.daily_state_reset_min))
+    energy_high = max(low, min(100, config.energy_start))
+    patience_high = max(low, min(100, config.patience_start))
+    state["energy"] = random.uniform(low, energy_high)
+    state["patience"] = random.uniform(low, patience_high)
+    state["daily_reset_cycle"] = cycle
+    _log("info", f"每日状态重置: {chat_key} energy={state['energy']:.1f} patience={state['patience']:.1f}")
+    return True
+
+
 def _default_chat_state() -> Dict[str, Any]:
     return {
         "valence": float(config.mood_baseline),
@@ -2115,6 +2173,7 @@ def _default_chat_state() -> Dict[str, Any]:
         "last_update": _now(),
         "last_bot_msg": 0.0,
         "last_user_msg": 0.0,
+        "daily_reset_cycle": _daily_reset_cycle(),
         "ignored_streak": 0,
         "ignored_marked_for": 0.0,
         "proactive_date": "",
@@ -2141,6 +2200,8 @@ async def _load_chat_state(chat_key: str) -> Dict[str, Any]:
         merged["valence"] = _clamp(float(merged.get("valence", baseline)) + (baseline - float(merged.get("valence", baseline))) * decay, 0, 100)
         merged["patience"] = _clamp(float(merged.get("patience", config.patience_start)) + config.patience_recover_per_hour * hours, 0, 100)
         merged["last_update"] = now
+    if await _maybe_daily_reset_chat_state(chat_key, merged):
+        await _save_chat_state(chat_key, merged)
     return merged
 
 
@@ -3889,6 +3950,31 @@ async def _fetch_original_at(ctx: AgentCtx, chat_message: Any, message_id: str) 
     return []
 
 
+def _should_block_low_resource(chat_message: Any, chat_key: str, state: Dict[str, Any]) -> bool:
+    if not config.low_resource_ignore_enabled:
+        return False
+    if not chat_key.startswith("onebot_v11-group_"):
+        return False
+    if not bool(getattr(chat_message, "is_tome", False)):
+        return False
+    user_id = str(
+        getattr(chat_message, "platform_userid", "")
+        or getattr(chat_message, "sender_id", "")
+        or ""
+    )
+    if _is_super_user(user_id):
+        return False
+    energy_low = config.energy_enabled and float(
+        state.get("energy", config.energy_start)
+    ) < config.low_energy_threshold
+    patience_low = float(
+        state.get("patience", config.patience_start)
+    ) < config.low_patience_threshold
+    if not energy_low and not patience_low:
+        return False
+    return random.random() < config.low_resource_ignore_probability
+
+
 async def _restore_original_at(ctx: AgentCtx, chat_message: Any, chat_key: str) -> None:
     message_id = str(getattr(chat_message, "message_id", "") or "").strip()
     if not message_id:
@@ -3970,6 +4056,15 @@ async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSig
                 return MsgSignal.BLOCK_TRIGGER
             _log("debug", f"戳一戳处理: action=none user={user_id}")
             return MsgSignal.BLOCK_TRIGGER
+        if chat_key and is_tome and config.low_resource_ignore_enabled:
+            low_state = await _load_chat_state(chat_key)
+            if _should_block_low_resource(chat_message, chat_key, low_state):
+                _log(
+                    "info",
+                    f"低精力/耐心概率不回: {chat_key} energy={float(low_state.get('energy', 0)):.1f} "
+                    f"patience={float(low_state.get('patience', 0)):.1f}",
+                )
+                return MsgSignal.BLOCK_TRIGGER
         bot_names = await _get_bot_names_for_chat(chat_key, _ctx) if chat_key else set()
         bot_names |= set(_split_csv(config.extra_bot_names))
         content_lower = content_text.lower()

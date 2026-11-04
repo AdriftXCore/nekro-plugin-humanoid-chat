@@ -40,6 +40,11 @@ energy_recover_night_per_hour: 18.0
 low_energy_threshold: 30
 low_energy_reply_multiplier: 0.4
 low_energy_delay_multiplier: 1.8
+daily_state_reset_enabled: true
+daily_state_reset_min: 30
+low_resource_ignore_enabled: true
+low_resource_ignore_probability: 0.5
+low_patience_threshold: 30
 patience_start: 70
 patience_recover_per_hour: 8.0
 rapid_message_window: 8.0
@@ -119,7 +124,7 @@ quoted_link_always_fetch: true
 bangumi_enabled: true
 bangumi_access_token: ''
 bangumi_base_url: https://api.bgm.tv
-bangumi_user_agent: humanoid_chat/3.9.7 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
+bangumi_user_agent: humanoid_chat/3.9.8 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
 bangumi_timeout_seconds: 12
 bangumi_search_limit: 5
 bangumi_character_limit: 10
