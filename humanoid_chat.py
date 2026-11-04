@@ -75,7 +75,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.8",
+    version="3.9.9",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -319,6 +319,12 @@ class HumanoidConfig(ConfigBase):
         ge=0.0,
         title="【精力】每条消息消耗",
         description="每发一条分段消息消耗的精力。",
+    )
+    night_energy_cost_multiplier: float = Field(
+        default=2.0,
+        ge=1.0,
+        title="【精力】夜间消耗倍率",
+        description="夜间每发送一个分段时，精力消耗乘以该倍率。",
     )
     energy_recover_day_per_hour: float = Field(
         default=6.0,
@@ -871,7 +877,7 @@ class HumanoidConfig(ConfigBase):
         description="Bangumi API 地址，默认 https://api.bgm.tv。",
     )
     bangumi_user_agent: str = Field(
-        default="humanoid_chat/3.9.8 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
+        default="humanoid_chat/3.9.9 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
         title="【Bangumi】User-Agent",
         description="Bangumi 要求带可识别 User-Agent；一般不用改。",
     )
@@ -1359,7 +1365,7 @@ def _bangumi_request(
     query = urllib.parse.urlencode(params or {})
     url = f"{base_url}{path}" + (f"?{query}" if query else "")
     headers = {
-        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.8").strip(),
+        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.9").strip(),
         "Accept": "application/json",
     }
     token = (config.bangumi_access_token or "").strip()
@@ -2330,7 +2336,10 @@ async def _note_bot_send(chat_key: str, text: str) -> None:
     state["last_bot_msg"] = _now()
     state["bot_msg_count"] = int(state.get("bot_msg_count") or 0) + 1
     if config.energy_enabled:
-        state["energy"] = _clamp(float(state.get("energy", config.energy_start)) - config.energy_cost_per_message, 0, 100)
+        energy_cost = config.energy_cost_per_message
+        if _is_night():
+            energy_cost *= config.night_energy_cost_multiplier
+        state["energy"] = _clamp(float(state.get("energy", config.energy_start)) - energy_cost, 0, 100)
     mood_delta = _mood_delta_from_text(text)
     if mood_delta:
         state["valence"] = _clamp(float(state.get("valence", config.mood_baseline)) + mood_delta * 0.6, 0, 100)

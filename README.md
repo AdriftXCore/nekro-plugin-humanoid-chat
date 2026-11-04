@@ -4,7 +4,7 @@
 
 > 插件文件：`humanoid_chat.py`
 >
-> 当前版本：`3.9.8`
+> 当前版本：`3.9.9`
 >
 > 适用：Nekro Agent `2.4.x+`
 >
@@ -124,6 +124,9 @@
 ### 精力
 
 - 每发送一个分段消息，精力减少 `energy_cost_per_message`，默认 `1.5`
+- 夜间每段消耗再乘以 `night_energy_cost_multiplier`，默认 `2.0`
+  - 白天每段约 `1.5`
+  - 夜间每段约 `3.0`
 - 按真实时间恢复：
   - 白天 `+energy_recover_day_per_hour`，默认 `6/小时`
   - 夜间 `+energy_recover_night_per_hour`，默认 `18/小时`

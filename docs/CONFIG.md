@@ -68,6 +68,7 @@
 | `energy_enabled` | `True` | 【精力】启用精力系统：精力影响回复速度、分段数量和主动冒泡。 |
 | `energy_start` | `80` | 【精力】初始精力：新频道首次出现时的精力值。 |
 | `energy_cost_per_message` | `1.5` | 【精力】每条消息消耗：每发一条分段消息消耗的精力。 |
+| `night_energy_cost_multiplier` | `2.0` | 【精力】夜间消耗倍率：夜间每发送一个分段时，精力消耗乘以该倍率。 |
 | `energy_recover_day_per_hour` | `6.0` | 【精力】白天每小时恢复：非睡眠时段的精力恢复速度。 |
 | `energy_recover_night_per_hour` | `18.0` | 【精力】夜间每小时恢复：睡眠时段的精力恢复速度。 |
 | `low_energy_threshold` | `30` | 【精力】低精力阈值：低于该值后回复更慢、更短、更少主动说话。 |
@@ -198,7 +199,7 @@
 | `bangumi_enabled` | `True` | 【Bangumi】启用动漫搜索、条目详情、角色和每日放送工具。 |
 | `bangumi_access_token` | 空 | 【Bangumi】Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。 |
 | `bangumi_base_url` | `https://api.bgm.tv` | 【Bangumi】API 地址。 |
-| `bangumi_user_agent` | `humanoid_chat/3.9.8 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
+| `bangumi_user_agent` | `humanoid_chat/3.9.9 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
 | `bangumi_timeout_seconds` | `12` | 【Bangumi】单次请求超时（秒）。 |
 | `bangumi_search_limit` | `5` | 【Bangumi】搜索结果数。 |
 | `bangumi_character_limit` | `10` | 【Bangumi】角色结果数。 |
