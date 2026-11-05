@@ -90,6 +90,9 @@
 | `familiarity_enabled` | `True` | 【关系】启用熟悉度：按用户累计熟悉度；与「好感度系统」插件的长期评分互不替代。 |
 | `familiarity_gain` | `1.2` | 【关系】每条消息熟悉度增量：正常互动时的熟悉度增长；连续轰炸会打折。 |
 | `familiarity_max` | `100` | 【关系】熟悉度上限：熟悉度封顶值。 |
+| `favorability_reply_enabled` | `True` | 【关系】好感度影响响应：读取「好感度系统」分数，小幅影响叫名字和低状态拒回概率。 |
+| `favorability_reply_strength` | `0.10` | 【关系】好感度响应权重：好感度 0~100 时响应概率最多提升 10%。 |
+| `favorability_reply_cache_seconds` | `30` | 【关系】好感度缓存秒数：缓存分数，避免每条消息查库。 |
 | `memory_limit` | `8` | 【关系】每用户小事记忆条数：AI 通过 humanoid_remember 记录的小事最多保留多少条。 |
 | `enable_memory` | `True` | 【关系】启用小事记忆工具：允许 AI 调用 humanoid_remember 记录值得记住的互动。 |
 
@@ -202,7 +205,7 @@
 | `bangumi_enabled` | `True` | 【Bangumi】启用动漫搜索、条目详情、角色和每日放送工具。 |
 | `bangumi_access_token` | 空 | 【Bangumi】Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。 |
 | `bangumi_base_url` | `https://api.bgm.tv` | 【Bangumi】API 地址。 |
-| `bangumi_user_agent` | `humanoid_chat/3.9.12 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
+| `bangumi_user_agent` | `humanoid_chat/3.9.15 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
 | `bangumi_timeout_seconds` | `12` | 【Bangumi】单次请求超时（秒）。 |
 | `bangumi_search_limit` | `5` | 【Bangumi】搜索结果数。 |
 | `bangumi_character_limit` | `10` | 【Bangumi】角色结果数。 |

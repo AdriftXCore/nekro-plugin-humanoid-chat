@@ -50,6 +50,7 @@ from nekro_agent.api.schemas import AgentCtx
 from nekro_agent.api.signal import MsgSignal
 from nekro_agent.models.db_chat_channel import DBChatChannel
 from nekro_agent.models.db_chat_message import DBChatMessage
+from nekro_agent.models.db_plugin_data import DBPluginData
 from nekro_agent.schemas.chat_message import ChatMessageSegmentAt, ChatMessageSegmentType
 
 try:
@@ -75,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.12",
+    version="3.9.15",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -451,6 +452,25 @@ class HumanoidConfig(ConfigBase):
         ge=1,
         title="【关系】熟悉度上限",
         description="熟悉度封顶值。",
+    )
+    favorability_reply_enabled: bool = Field(
+        default=True,
+        title="【关系】好感度影响响应",
+        description="读取「好感度系统」的分数，小幅影响叫名字和低状态拒回概率。",
+    )
+    favorability_reply_strength: float = Field(
+        default=0.10,
+        ge=0.0,
+        le=0.50,
+        title="【关系】好感度响应权重",
+        description="好感度 0~100 时，响应概率最多提升的比例；默认 0.10 即最多 +10%。",
+    )
+    favorability_reply_cache_seconds: int = Field(
+        default=30,
+        ge=0,
+        le=300,
+        title="【关系】好感度缓存秒数",
+        description="缓存读取到的好感度分数，避免每条消息查询数据库。",
     )
     memory_limit: int = Field(
         default=8,
@@ -898,7 +918,7 @@ class HumanoidConfig(ConfigBase):
         description="Bangumi API 地址，默认 https://api.bgm.tv。",
     )
     bangumi_user_agent: str = Field(
-        default="humanoid_chat/3.9.12 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
+        default="humanoid_chat/3.9.13 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)",
         title="【Bangumi】User-Agent",
         description="Bangumi 要求带可识别 User-Agent；一般不用改。",
     )
@@ -1386,7 +1406,7 @@ def _bangumi_request(
     query = urllib.parse.urlencode(params or {})
     url = f"{base_url}{path}" + (f"?{query}" if query else "")
     headers = {
-        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.12").strip(),
+        "User-Agent": (config.bangumi_user_agent or "humanoid_chat/3.9.13").strip(),
         "Accept": "application/json",
     }
     token = (config.bangumi_access_token or "").strip()
@@ -2007,6 +2027,7 @@ STORE_QZONE_SCHEDULE = "qzone_schedule"
 _TRIGGER_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOT_NAMES_CACHE: Dict[str, Dict[str, Any]] = {}
 _LAST_UNMENTIONED_REPLY: Dict[str, float] = {}
+_FAVORABILITY_CACHE: Dict[Tuple[str, str], Tuple[float, float]] = {}
 _PROCESSED_MSG_IDS: Set[str] = set()
 _GROUP_ACTIVITY: Dict[str, Deque[float]] = {}
 _LAST_INBOUND_TS: Dict[str, float] = {}
@@ -2393,6 +2414,52 @@ def _energy_reply_factor(state: Dict[str, Any]) -> float:
 def _patience_reply_factor(state: Dict[str, Any]) -> float:
     patience = float(state.get("patience", config.patience_start))
     return _clamp(0.35 + patience / 100.0 * 0.75, 0.35, 1.1)
+
+
+def _favorability_reply_factor(score: float) -> float:
+    if not config.favorability_reply_enabled:
+        return 1.0
+    normalized = _clamp(float(score), 0.0, 100.0) / 100.0
+    return _clamp(1.0 + normalized * config.favorability_reply_strength, 1.0, 1.5)
+
+
+def _favorability_block_factor(score: float) -> float:
+    if not config.favorability_reply_enabled:
+        return 1.0
+    normalized = _clamp(float(score), 0.0, 100.0) / 100.0
+    return _clamp(1.0 - normalized * config.favorability_reply_strength, 0.9, 1.0)
+
+
+async def _get_favorability_score(chat_key: str, user_id: str) -> float:
+    if not config.favorability_reply_enabled or not chat_key or not user_id:
+        return 0.0
+    cache_key = (chat_key, str(user_id))
+    now = _now()
+    cached = _FAVORABILITY_CACHE.get(cache_key)
+    if cached and cached[0] > now:
+        return cached[1]
+    score = 0.0
+    try:
+        record = await DBPluginData.filter(
+            plugin_key="liugu.nekro_favorability",
+            target_chat_key=chat_key,
+            target_user_id="",
+            data_key="favorability_state",
+        ).first()
+        if record:
+            state = json.loads(record.data_value)
+            profiles = state.get("profiles") if isinstance(state, dict) else None
+            profile = profiles.get(str(user_id)) if isinstance(profiles, dict) else None
+            if isinstance(profile, dict):
+                score = float(profile.get("score") or 0)
+    except Exception as exc:
+        _log("debug", f"读取好感度失败: {chat_key}/{user_id}: {type(exc).__name__}: {exc}")
+    score = _clamp(score, 0.0, 100.0)
+    ttl = max(0, int(config.favorability_reply_cache_seconds))
+    _FAVORABILITY_CACHE[cache_key] = (now + ttl, score)
+    if len(_FAVORABILITY_CACHE) > 1000:
+        _FAVORABILITY_CACHE.clear()
+    return score
 
 
 # ============================================================
@@ -3442,6 +3509,92 @@ async def group_profile_gen_cmd(
 
 
 @plugin.mount_command(
+    name="humanoid_status",
+    description="查看当前会话的精力、耐心、低状态拒回和回复概率",
+    aliases=["拟人状态"],
+    usage="humanoid_status",
+    permission=CommandPermission.SUPER_USER,
+    category="拟人",
+)
+async def humanoid_status_cmd(context: CommandExecutionContext) -> CommandResponse:
+    chat_key = (context.chat_key or "").strip()
+    if not chat_key:
+        return CmdCtl.failed("无法识别当前会话。")
+
+    state = await _load_chat_state(chat_key)
+    energy = float(state.get("energy", config.energy_start))
+    patience = float(state.get("patience", config.patience_start))
+    is_group = chat_key.startswith("onebot_v11-group_")
+    night = _is_night()
+
+    favorability_score = await _get_favorability_score(chat_key, str(context.user_id or ""))
+    favorability_factor = _favorability_reply_factor(favorability_score)
+    block_probability, severity = _low_resource_block_probability(state)
+    if not config.low_resource_ignore_enabled:
+        block_probability = 0.0
+        severity = 0.0
+    else:
+        block_probability = _clamp(
+            block_probability * _favorability_block_factor(favorability_score),
+            0.0,
+            1.0,
+        )
+    critical = (
+        config.energy_enabled
+        and energy <= config.low_resource_critical_threshold
+        and patience <= config.low_resource_critical_threshold
+    )
+
+    if is_group:
+        if night and not config.night_direct_reply:
+            direct_reply = 0.0
+        else:
+            direct_reply = 1.0 - block_probability
+        if night and config.night_silence_groups:
+            name_chance = 0.0
+        else:
+            name_chance = _clamp(
+                config.keyword_reply_probability
+                * _night_factor_reply()
+                * _energy_reply_factor(state)
+                * _patience_reply_factor(state)
+                * favorability_factor,
+                0.0,
+                1.0,
+            )
+    else:
+        direct_reply = 0.0 if night and not config.night_direct_reply else 1.0
+        name_chance = None
+
+    lines = [f"会话：{chat_key}", f"精力：{energy:.1f}/100（低阈值 {config.low_energy_threshold}）"]
+    if not config.energy_enabled:
+        lines[-1] = f"精力：已关闭（低阈值 {config.low_energy_threshold}）"
+    lines.append(f"耐心：{patience:.1f}/100（低阈值 {config.low_patience_threshold}）")
+    lines.append(f"好感度：{favorability_score:.0f}/100（系数 {favorability_factor:.3f}）")
+    cycle = str(state.get("daily_reset_cycle") or "").strip()
+    if cycle:
+        lines.append(f"状态周期：{cycle}")
+    lines.append(
+        f"低状态权重：{severity:.3f}（双临界阈值 {config.low_resource_critical_threshold}，"
+        f"{'已触发' if critical else '未触发'}）"
+    )
+    if is_group:
+        lines.append(f"低状态拒回：{block_probability * 100:.1f}%")
+        lines.append(f"@/引用回复：{direct_reply * 100:.1f}%")
+        assert name_chance is not None
+        lines.append(f"叫名字触发：{name_chance * 100:.1f}%")
+    else:
+        lines.append("低状态拒回：不适用（私聊）")
+        lines.append(f"私聊回复：{direct_reply * 100:.1f}%")
+    if night:
+        lines.append(
+            f"当前夜间：直接回复{'开' if config.night_direct_reply else '关'}，"
+            f"群聊静默{'开' if config.night_silence_groups else '关'}"
+        )
+    return CmdCtl.success("\n".join(lines))
+
+
+@plugin.mount_command(
     name="group_learn",
     description="从近期群聊提取黑话候选，自动应用高置信度安全候选，其余保留编号审查",
     usage="group_learn [chat_key|群号|--all]",
@@ -3919,6 +4072,13 @@ if NONEBOT_AVAILABLE:
                 if _now() - last_reply < config.reply_cd_seconds:
                     return
 
+            favorability_score = 0.0
+            favorability_factor = 1.0
+            if name_called:
+                favorability_score = await _get_favorability_score(chat_key, str(user_id))
+                favorability_factor = _favorability_reply_factor(favorability_score)
+                target_prob *= favorability_factor
+
             target_prob *= _night_factor_reply()
             target_prob *= _energy_reply_factor(state)
             target_prob *= _patience_reply_factor(state)
@@ -3932,7 +4092,8 @@ if NONEBOT_AVAILABLE:
             _log(
                 "debug",
                 f"漏斗: msg='{raw_msg[:40]}' 名字={list(all_names)} 类型={reason} "
-                f"阈值={target_prob:.3f} 骰子={dice:.3f} 命中={hit}",
+                f"阈值={target_prob:.3f} 骰子={dice:.3f} 命中={hit} "
+                f"fav={favorability_score:.0f} fav_factor={favorability_factor:.3f}",
             )
             if hit:
                 asyncio.create_task(
@@ -4030,7 +4191,7 @@ def _low_resource_block_probability(state: Dict[str, Any]) -> tuple[float, float
     return probability, severity
 
 
-def _should_block_low_resource(chat_message: Any, chat_key: str, state: Dict[str, Any]) -> bool:
+async def _should_block_low_resource(chat_message: Any, chat_key: str, state: Dict[str, Any]) -> bool:
     if not config.low_resource_ignore_enabled:
         return False
     if not chat_key.startswith("onebot_v11-group_"):
@@ -4048,17 +4209,22 @@ def _should_block_low_resource(chat_message: Any, chat_key: str, state: Dict[str
     probability, severity = _low_resource_block_probability(state)
     if probability <= 0:
         return False
+    favorability_score = await _get_favorability_score(chat_key, user_id)
+    block_factor = _favorability_block_factor(favorability_score)
+    probability = _clamp(probability * block_factor, 0.0, 1.0)
     if random.random() >= probability:
         _log(
             "debug",
             f"低精力/耐心未拦截: {chat_key} energy={float(state.get('energy', 0)):.1f} "
-            f"patience={float(state.get('patience', 0)):.1f} severity={severity:.3f} p={probability:.3f}",
+            f"patience={float(state.get('patience', 0)):.1f} severity={severity:.3f} "
+            f"fav={favorability_score:.0f} block_factor={block_factor:.3f} p={probability:.3f}",
         )
         return False
     _log(
         "info",
         f"低精力/耐心概率不回: {chat_key} energy={float(state.get('energy', 0)):.1f} "
-        f"patience={float(state.get('patience', 0)):.1f} severity={severity:.3f} p={probability:.3f}",
+        f"patience={float(state.get('patience', 0)):.1f} severity={severity:.3f} "
+        f"fav={favorability_score:.0f} block_factor={block_factor:.3f} p={probability:.3f}",
     )
     return True
 
@@ -4146,7 +4312,7 @@ async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSig
             return MsgSignal.BLOCK_TRIGGER
         if chat_key and is_tome and config.low_resource_ignore_enabled:
             low_state = await _load_chat_state(chat_key)
-            if _should_block_low_resource(chat_message, chat_key, low_state):
+            if await _should_block_low_resource(chat_message, chat_key, low_state):
                 return MsgSignal.BLOCK_TRIGGER
         bot_names = await _get_bot_names_for_chat(chat_key, _ctx) if chat_key else set()
         bot_names |= set(_split_csv(config.extra_bot_names))
@@ -5962,6 +6128,7 @@ async def clean_up() -> str:
     _TRIGGER_CACHE.clear()
     _BOT_NAMES_CACHE.clear()
     _LAST_UNMENTIONED_REPLY.clear()
+    _FAVORABILITY_CACHE.clear()
     _PROCESSED_MSG_IDS.clear()
     _GROUP_ACTIVITY.clear()
     _LAST_INBOUND_TS.clear()

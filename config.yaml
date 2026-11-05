@@ -56,6 +56,9 @@ rapid_patience_cost: 6.0
 familiarity_enabled: true
 familiarity_gain: 1.2
 familiarity_max: 100
+favorability_reply_enabled: true
+favorability_reply_strength: 0.10
+favorability_reply_cache_seconds: 30
 memory_limit: 8
 enable_memory: true
 group_profile_enabled: true
@@ -128,7 +131,7 @@ quoted_link_always_fetch: true
 bangumi_enabled: true
 bangumi_access_token: ''
 bangumi_base_url: https://api.bgm.tv
-bangumi_user_agent: humanoid_chat/3.9.12 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
+bangumi_user_agent: humanoid_chat/3.9.14 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
 bangumi_timeout_seconds: 12
 bangumi_search_limit: 5
 bangumi_character_limit: 10
