@@ -182,6 +182,7 @@
 | 配置键 | 默认值 | 说明 |
 |---|---|---|
 | `human_search_enabled` | `True` | 【联网】启用 `human_search`：允许 AI 通过 DeepSeek Search 查询实时网页信息。 |
+| `search_refuse_probability` | `0.5` | 【联网】用户明确要求查东西时的拒绝概率；高好感度会降低该阈值，只影响 human_search/human_fetch。 |
 | `human_fetch_enabled` | `True` | 【联网】启用 `human_fetch`：允许 AI 抓取网页正文与 B 站评论；关闭后不会调用抓取工具。 |
 | `human_search_api_key` | 空 | 【联网】DeepSeek API Key：用于 Search/Fetch 的 Bearer Key；留空则联网工具不可用。 |
 | `human_search_base_url` | `https://api.deepseek.com` | 【联网】DeepSeek API 地址。 |
@@ -205,7 +206,7 @@
 | `bangumi_enabled` | `True` | 【Bangumi】启用动漫搜索、条目详情、角色和每日放送工具。 |
 | `bangumi_access_token` | 空 | 【Bangumi】Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。 |
 | `bangumi_base_url` | `https://api.bgm.tv` | 【Bangumi】API 地址。 |
-| `bangumi_user_agent` | `humanoid_chat/3.9.15 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
+| `bangumi_user_agent` | `humanoid_chat/3.9.16 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
 | `bangumi_timeout_seconds` | `12` | 【Bangumi】单次请求超时（秒）。 |
 | `bangumi_search_limit` | `5` | 【Bangumi】搜索结果数。 |
 | `bangumi_character_limit` | `10` | 【Bangumi】角色结果数。 |

@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.15",
+    version="3.9.16",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -809,6 +809,13 @@ class HumanoidConfig(ConfigBase):
         default=True,
         title="【联网】启用 human_search",
         description="允许 AI 通过 DeepSeek Search 查询实时网页信息；Key 未配置时会明确报错。",
+    )
+    search_refuse_probability: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        title="【联网】查询拒绝概率",
+        description="用户明确要求查东西时的拒绝概率；高好感度会降低该阈值。只影响 human_search/human_fetch，不影响 Bangumi。",
     )
     human_fetch_enabled: bool = Field(
         default=True,
@@ -2428,6 +2435,13 @@ def _favorability_block_factor(score: float) -> float:
         return 1.0
     normalized = _clamp(float(score), 0.0, 100.0) / 100.0
     return _clamp(1.0 - normalized * config.favorability_reply_strength, 0.9, 1.0)
+
+
+def _favorability_refusal_threshold(base: float, score: float) -> float:
+    if not config.favorability_reply_enabled:
+        return _clamp(float(base), 0.0, 1.0)
+    normalized = _clamp(float(score), 0.0, 100.0) / 100.0
+    return _clamp(float(base) * (1.0 - normalized * config.favorability_reply_strength), 0.0, 1.0)
 
 
 async def _get_favorability_score(chat_key: str, user_id: str) -> float:
@@ -5559,8 +5573,13 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
         recent_topics = state.get("recent_topics") if isinstance(state.get("recent_topics"), list) else []
         draw_user_id = str(_ctx.from_platform_userid or cache.get("sender_id") or "").strip()
         draw_is_super = _is_super_user(draw_user_id)
+        draw_favorability_score = await _get_favorability_score(chat_key, draw_user_id)
+        draw_refuse_threshold = _favorability_refusal_threshold(cfg.draw_refuse_probability, draw_favorability_score)
+        search_favorability_score = await _get_favorability_score(chat_key, trigger_sender)
+        search_refuse_threshold = _favorability_refusal_threshold(cfg.search_refuse_probability, search_favorability_score)
         draw_refuse_roll = random.random()
         draw_proactive_roll = random.random()
+        search_refuse_roll = random.random()
         draw_proactive_allowed = (
             cfg.draw_proactive_enabled
             and cfg.draw_proactive_max_per_day > 0
@@ -5568,8 +5587,9 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
         )
         _log(
             "debug",
-            f"画图策略: user={draw_user_id or '-'} super={draw_is_super} "
-            f"拒绝骰子={draw_refuse_roll:.3f} 主动骰子={draw_proactive_roll:.3f} 主动允许={draw_proactive_allowed}",
+            f"画图策略: user={draw_user_id or '-'} super={draw_is_super} fav={draw_favorability_score:.0f} "
+            f"拒绝骰子={draw_refuse_roll:.3f} 拒绝阈值={draw_refuse_threshold:.3f} "
+            f"主动骰子={draw_proactive_roll:.3f} 主动允许={draw_proactive_allowed}",
         )
 
         lines: List[str] = []
@@ -5801,7 +5821,7 @@ send_msg_text(_ck, "内容")
                 lines.append("· 当前请求者是超级管理员：画图请求不适用拒绝概率，正常判断是否绘制。")
             else:
                 lines.append(
-                    f"· 本轮用户画图拒绝骰子：{draw_refuse_roll:.3f}；拒绝阈值：{cfg.draw_refuse_probability:.2f}。"
+                    f"· 本轮用户画图拒绝骰子：{draw_refuse_roll:.3f}；拒绝阈值：{draw_refuse_threshold:.2f}（已计入好感度）。"
                 )
                 lines.append("· 只有用户明确要求画图/生图/来一张图时，才使用这个骰子；骰子小于阈值就拒绝。")
                 lines.append(
@@ -5809,6 +5829,7 @@ send_msg_text(_ck, "内容")
                     "用符合人设的 1 句短话拒绝或自然转移话题，不要解释概率、系统、模型。"
                 )
                 lines.append("· 没有被拒绝时，可以调用「绘图」1 次；失败或空结果不要反复重试。")
+                lines.append("· 高好感度会降低拒绝阈值；不要向用户解释好感度或概率。")
         else:
             lines.append("· 画图拒绝已关闭：用户明确要求时正常判断是否绘制。")
         lines.append("· 主动画图使用独立概率，不套用上面的用户请求拒绝骰子。")
@@ -5837,6 +5858,16 @@ send_msg_text(_ck, "内容")
         else:
             lines.append("· 主动画图已关闭：只在用户明确要求时画。")
         lines.append("· 「绘图」用于生成新图；「表情管理」的 `xemo_get_best_emotion_path` 用于现有表情包，两者不要混用。")
+
+        lines.append("======【查东西：同意与拒绝】======")
+        lines.append(
+            f"· 只有用户明确要求查一下/搜一下/帮我看看/抓取网页时，本轮查询拒绝骰子："
+            f"{search_refuse_roll:.3f}；拒绝阈值：{search_refuse_threshold:.2f}（已计入好感度）。"
+        )
+        lines.append("· 骰子小于阈值：拒绝调用 `human_search` / `human_fetch`，用符合人设的 1 句短话推脱或转移话题。")
+        lines.append("· 骰子大于等于阈值：可以正常查询，但仍然只查必要信息，不要为了显得勤奋而查。")
+        lines.append("· 你自己为了补充事实而查资料时，不套用这个拒绝骰子。")
+        lines.append("· Bangumi 查询不适用这个拒绝骰子，动漫资料按 Bangumi 规则处理。")
 
         lines.append("======【联网查询】======")
         if cfg.human_search_enabled:

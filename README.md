@@ -4,7 +4,7 @@
 
 > 插件文件：`humanoid_chat.py`
 >
-> 当前版本：`3.9.15`
+> 当前版本：`3.9.16`
 >
 > 适用：Nekro Agent `2.4.x+`
 >
@@ -48,6 +48,7 @@
   - 每天按 `night_end` 起床时间进入新周期，精力和耐心随机重置到 `30~默认值`
   - 低精力/低耐心时，群聊直接 @ 或引用机器人有概率完全不回复；超级管理员豁免
   - 好感度会小幅提高叫名字触发率，并降低低状态下的 @ 拒回概率
+  - 好感度会降低画图和查询的拒绝阈值（Bangumi 不套用）
 - **本群档案**
   - 每个群一个 YAML：群描述、身份、群主/管理员、关键人物、群文化、语气、群规、管理策略
   - 自动识别机器人在群里的 `owner/admin/member` 角色
@@ -196,6 +197,9 @@ factor = 1 + (score / 100) * favorability_reply_strength
 - 叫名字：`target_prob *= factor`
 - 关键词/普通闲聊：不套用
 - @ / 引用：健康状态仍保持直接回复；只把低状态拒回概率乘以 `1 - 好感度/100*0.10`
+- 画图：拒绝阈值乘以 `1 - 好感度/100*0.10`
+- 查东西：`human_search` / `human_fetch` 的拒绝阈值乘以 `1 - 好感度/100*0.10`
+- Bangumi 查询不套用查询拒绝阈值
 - 私聊：不套用
 - 超级管理员：保持豁免
 - 读取结果缓存 `favorability_reply_cache_seconds`，默认 30 秒
@@ -660,6 +664,7 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `draw_refuse_enabled` | 是否启用画图概率拒绝 |
 | `draw_refuse_probability` | 普通用户请求画图的拒绝概率，默认 0.8 |
 | `human_search_enabled` | 是否启用 `human_search` |
+| `search_refuse_probability` | 用户明确要求查东西时的拒绝概率，默认 0.5；高好感度降低阈值 |
 | `human_fetch_enabled` | 是否启用 `human_fetch` |
 | `human_search_api_key` | DeepSeek Search/Fetch Bearer Key，留空则不可用 |
 | `bangumi_access_token` | Bangumi Access Token，留空匿名查询 |
