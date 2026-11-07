@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.20",
+    version="3.9.21",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -302,6 +302,25 @@ class HumanoidConfig(ConfigBase):
         ge=0.1,
         title="【情绪】心情回落时长（小时）",
         description="情绪偏离基线后，大约多久回落一半。",
+    )
+    mood_state_enabled: bool = Field(
+        default=True,
+        title="【情绪】启用心情状态",
+        description="把 valence 映射为兴奋/开心/平静/低落/烦躁/疲惫等状态。",
+    )
+    mood_state_hysteresis: int = Field(
+        default=5,
+        ge=0,
+        le=20,
+        title="【情绪】心情状态防抖",
+        description="心情值需要越过阈值多少点才切换状态，避免来回抖动。",
+    )
+    mood_reason_ttl_minutes: int = Field(
+        default=30,
+        ge=0,
+        le=1440,
+        title="【情绪】心情原因有效期（分钟）",
+        description="原因超过该时间后不再注入提示词，只保留心情状态。",
     )
     energy_enabled: bool = Field(
         default=True,
@@ -2076,6 +2095,117 @@ def _mood_delta_from_text(text: str) -> float:
     return _clamp((positive - negative) * 3.0, -9.0, 9.0)
 
 
+_MOOD_VALENCE_BANDS = (
+    ("烦躁", 0, 30),
+    ("低落", 30, 45),
+    ("平静", 45, 65),
+    ("开心", 65, 80),
+    ("兴奋", 80, 101),
+)
+_MOOD_LABELS = {"烦躁", "低落", "平静", "开心", "兴奋", "疲惫"}
+
+
+def _valence_mood_label(valence: float) -> str:
+    for label, low, high in _MOOD_VALENCE_BANDS:
+        if low <= valence < high:
+            return label
+    return "兴奋" if valence >= 100 else "烦躁"
+
+
+def _raw_mood_label(valence: float, energy: float, patience: float) -> str:
+    if energy < 20:
+        return "疲惫"
+    if patience < 25:
+        return "烦躁"
+    return _valence_mood_label(valence)
+
+
+def _mood_band_index(label: str) -> Optional[int]:
+    for index, (name, _, _) in enumerate(_MOOD_VALENCE_BANDS):
+        if name == label:
+            return index
+    return None
+
+
+def _stabilize_mood_label(current: str, raw: str, valence: float, energy: float, patience: float) -> str:
+    if not current or current not in _MOOD_LABELS or current == raw:
+        return raw
+    hysteresis = max(0, int(config.mood_state_hysteresis))
+    if current == "疲惫":
+        return raw if energy >= 20 + hysteresis else current
+    if raw == "疲惫":
+        return raw
+    if current == "烦躁":
+        return raw if patience >= 25 + hysteresis and valence >= 30 + hysteresis else current
+    if raw == "烦躁":
+        return raw
+    current_index = _mood_band_index(current)
+    raw_index = _mood_band_index(raw)
+    if current_index is None or raw_index is None:
+        return raw
+    if raw_index > current_index:
+        return raw if valence >= _MOOD_VALENCE_BANDS[raw_index][1] + hysteresis else current
+    if raw_index < current_index:
+        return raw if valence <= _MOOD_VALENCE_BANDS[current_index][1] - hysteresis else current
+    return raw
+
+
+def _default_mood_reason(label: str, patience: float) -> str:
+    if label == "疲惫":
+        return "精力见底"
+    if label == "烦躁":
+        return "耐心有点见底" if patience < 25 else "心情有点烦"
+    if label == "低落":
+        return "心情有点低落"
+    if label == "开心":
+        return "心情不错"
+    if label == "兴奋":
+        return "心情很兴奋"
+    return "心情平静"
+
+
+def _mood_reason_from_text(text: str, delta: float) -> str:
+    if delta > 0:
+        return "聊得开心"
+    if delta < 0:
+        return "被冒犯或不太舒服"
+    return ""
+
+
+def _refresh_mood_state(state: Dict[str, Any], reason: str = "", now: Optional[float] = None) -> None:
+    if not config.mood_state_enabled:
+        state["mood_label"] = ""
+        return
+    current_time = now if now is not None else _now()
+    valence = _clamp(float(state.get("valence", config.mood_baseline)), 0, 100)
+    energy = _clamp(float(state.get("energy", config.energy_start)), 0, 100)
+    patience = _clamp(float(state.get("patience", config.patience_start)), 0, 100)
+    current = str(state.get("mood_label") or "")
+    raw = _raw_mood_label(valence, energy, patience)
+    label = _stabilize_mood_label(current, raw, valence, energy, patience)
+    changed = label != current
+    if changed:
+        state["mood_label"] = label
+        state["mood_label_ts"] = current_time
+        if not reason:
+            reason = _default_mood_reason(label, patience)
+    if reason:
+        state["mood_reason"] = reason
+        state["mood_reason_ts"] = current_time
+
+
+def _mood_reason_for_prompt(state: Dict[str, Any], now: Optional[float] = None) -> str:
+    ttl = max(0, int(config.mood_reason_ttl_minutes)) * 60
+    if ttl <= 0:
+        return ""
+    reason = str(state.get("mood_reason") or "").strip()
+    if not reason:
+        return ""
+    current_time = now if now is not None else _now()
+    reason_ts = float(state.get("mood_reason_ts") or 0)
+    return reason if reason_ts and current_time - reason_ts <= ttl else ""
+
+
 def _log(level: str, text: str) -> None:
     cfg = config
     if not cfg.debug_log and level == "debug":
@@ -2315,6 +2445,10 @@ async def _maybe_daily_reset_chat_state(chat_key: str, state: Dict[str, Any]) ->
 def _default_chat_state() -> Dict[str, Any]:
     return {
         "valence": float(config.mood_baseline),
+        "mood_label": "",
+        "mood_reason": "",
+        "mood_label_ts": 0.0,
+        "mood_reason_ts": 0.0,
         "energy": float(config.energy_start),
         "patience": float(config.patience_start),
         "last_update": _now(),
@@ -2349,6 +2483,7 @@ async def _load_chat_state(chat_key: str) -> Dict[str, Any]:
         merged["last_update"] = now
     if await _maybe_daily_reset_chat_state(chat_key, merged):
         await _save_chat_state(chat_key, merged)
+    _refresh_mood_state(merged, now=now)
     return merged
 
 
@@ -2457,6 +2592,7 @@ async def _touch_user_state(chat_key: str, user_id: str, text: str, nickname: st
     mood_delta = _mood_delta_from_text(text)
     if mood_delta:
         state["valence"] = _clamp(float(state.get("valence", cfg.mood_baseline)) + mood_delta, 0, 100)
+    _refresh_mood_state(state, reason=_mood_reason_from_text(text, mood_delta), now=now)
 
     if state.get("last_bot_msg") and now - float(state["last_bot_msg"]) < 300:
         state["ignored_streak"] = 0
@@ -2484,6 +2620,7 @@ async def _note_bot_send(chat_key: str, text: str) -> None:
     mood_delta = _mood_delta_from_text(text)
     if mood_delta:
         state["valence"] = _clamp(float(state.get("valence", config.mood_baseline)) + mood_delta * 0.6, 0, 100)
+    _refresh_mood_state(state, reason=_mood_reason_from_text(text, mood_delta))
     await _save_chat_state(chat_key, state)
 
     recent = _RECENT_SENT.setdefault(chat_key, deque(maxlen=max(1, config.anti_repeat_window)))
@@ -3630,6 +3767,9 @@ async def humanoid_status_cmd(context: CommandExecutionContext) -> CommandRespon
     state = await _load_chat_state(chat_key)
     energy = float(state.get("energy", config.energy_start))
     patience = float(state.get("patience", config.patience_start))
+    valence = float(state.get("valence", config.mood_baseline))
+    mood_label = str(state.get("mood_label") or "").strip() or _raw_mood_label(valence, energy, patience)
+    mood_reason = _mood_reason_for_prompt(state)
     is_group = chat_key.startswith("onebot_v11-group_")
     night = _is_night()
 
@@ -3676,6 +3816,12 @@ async def humanoid_status_cmd(context: CommandExecutionContext) -> CommandRespon
     if not config.energy_enabled:
         lines[-1] = f"精力：已关闭（低阈值 {config.low_energy_threshold}）"
     lines.append(f"耐心：{patience:.1f}/100（低阈值 {config.low_patience_threshold}）")
+    if config.mood_state_enabled:
+        lines.append(f"心情：{mood_label}（{valence:.0f}/100）")
+        if mood_reason:
+            lines.append(f"心情原因：{mood_reason}")
+    else:
+        lines.append(f"心情：已关闭（{valence:.0f}/100）")
     lines.append(f"好感度：{favorability_score:.0f}/100（系数 {favorability_factor:.3f}）")
     cycle = str(state.get("daily_reset_cycle") or "").strip()
     if cycle:
@@ -3756,6 +3902,36 @@ async def ai_ban_remove_cmd(
 ) -> CommandResponse:
     result = await _remove_ai_ban(selector)
     return CmdCtl.success(result) if result.startswith("已移除") else CmdCtl.failed(result)
+
+
+@plugin.mount_command(
+    name="humanoid_mood",
+    description="查看当前会话的心情状态、心情值和原因",
+    aliases=["心情状态"],
+    usage="humanoid_mood",
+    permission=CommandPermission.SUPER_USER,
+    category="拟人",
+)
+async def humanoid_mood_cmd(context: CommandExecutionContext) -> CommandResponse:
+    chat_key = (context.chat_key or "").strip()
+    if not chat_key:
+        return CmdCtl.failed("无法识别当前会话。")
+    state = await _load_chat_state(chat_key)
+    valence = float(state.get("valence", config.mood_baseline))
+    energy = float(state.get("energy", config.energy_start))
+    patience = float(state.get("patience", config.patience_start))
+    label = str(state.get("mood_label") or "").strip() or _raw_mood_label(valence, energy, patience)
+    reason = _mood_reason_for_prompt(state)
+    lines = [
+        f"会话：{chat_key}",
+        f"心情：{label}（{valence:.0f}/100）",
+        f"精力：{energy:.1f}/100",
+        f"耐心：{patience:.1f}/100",
+        f"状态：{'启用' if config.mood_state_enabled else '已关闭'}",
+    ]
+    if reason:
+        lines.append(f"原因：{reason}")
+    return CmdCtl.success("\n".join(lines))
 
 
 @plugin.mount_command(
@@ -5725,6 +5901,10 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
         energy = int(round(float(state.get("energy", cfg.energy_start))))
         patience = int(round(float(state.get("patience", cfg.patience_start))))
         valence = int(round(float(state.get("valence", cfg.mood_baseline))))
+        mood_label = str(state.get("mood_label") or "").strip()
+        if cfg.mood_state_enabled and not mood_label:
+            mood_label = _raw_mood_label(float(valence), float(energy), float(patience))
+        mood_reason = _mood_reason_for_prompt(state, now=_now()) if cfg.mood_state_enabled else ""
         familiarity = int(round(float(user_state.get("familiarity", 0.0))))
         interaction_count = int(user_state.get("interactions") or 0)
         memories = user_state.get("memories") if isinstance(user_state.get("memories"), list) else []
@@ -5830,8 +6010,11 @@ send_msg_text(_ck, "内容")
                 lines.append("· 本轮不自动抓取上下文链接；除非用户明确要求看链接/评论，否则不要调用 human_fetch。")
 
         lines.append("======【拟人状态】======")
+        mood_text = f"心情{mood_label}（{valence}/100）" if mood_label else f"心情 {valence}/100"
+        if mood_reason:
+            mood_text += f"，因为{mood_reason}"
         lines.append(
-            f"现在 {now_local.strftime('%H:%M')}（{period}）。心情 {valence}/100，精力 {energy}/100，耐心 {patience}/100。"
+            f"现在 {now_local.strftime('%H:%M')}（{period}）。{mood_text}，精力 {energy}/100，耐心 {patience}/100。"
         )
         if _is_night():
             lines.append("这是你的休息时间：回复更慢、更短；如果被吵醒可以带一点困意，但不要刻意演。")
@@ -5968,7 +6151,7 @@ send_msg_text(_ck, "内容")
                 if cooldown_ok and random.random() < cfg.sticker_hint_probability:
                     _LAST_STICKER_HINT[chat_key] = now_ts
                     if abs(mood_delta) >= cfg.sticker_mood_threshold:
-                        mood_word = "偏开心/兴奋" if mood_delta > 0 else "偏低落/烦躁"
+                        mood_word = mood_label or ("偏开心/兴奋" if mood_delta > 0 else "偏低落/烦躁")
                         lines.append(
                             f"· 你现在心情{mood_word}（{valence}/100）。如果合适，可以发 1 张表情包表达："
                             "先调用 `xemo_get_best_emotion_path(\"完整场景\")` 取路径，再用 `send_msg_file(_ck, 路径)` 发出；"
@@ -6231,6 +6414,7 @@ async def _proactive_tick(chat_key: str) -> None:
     if last_bot and last_bot > last_user and now - last_bot > 600 and float(state.get("ignored_marked_for") or 0) != last_bot:
         state["ignored_streak"] = int(state.get("ignored_streak") or 0) + 1
         state["ignored_marked_for"] = last_bot
+        _refresh_mood_state(state, reason="主动说话没人接", now=now)
         await _save_chat_state(chat_key, state)
 
     today = _today_str()

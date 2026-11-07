@@ -32,6 +32,9 @@ correction_rate: 0.02
 correction_prefix: 啊打错了，
 mood_baseline: 60
 mood_decay_hours: 6.0
+mood_state_enabled: true
+mood_state_hysteresis: 5
+mood_reason_ttl_minutes: 30
 energy_enabled: true
 energy_start: 80
 energy_cost_per_message: 1.5
@@ -132,7 +135,7 @@ quoted_link_always_fetch: true
 bangumi_enabled: true
 bangumi_access_token: ''
 bangumi_base_url: https://api.bgm.tv
-bangumi_user_agent: humanoid_chat/3.9.20 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
+bangumi_user_agent: humanoid_chat/3.9.21 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
 bangumi_timeout_seconds: 12
 bangumi_search_limit: 5
 bangumi_character_limit: 10
