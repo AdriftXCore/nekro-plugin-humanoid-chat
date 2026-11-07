@@ -132,7 +132,7 @@ quoted_link_always_fetch: true
 bangumi_enabled: true
 bangumi_access_token: ''
 bangumi_base_url: https://api.bgm.tv
-bangumi_user_agent: humanoid_chat/3.9.18 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
+bangumi_user_agent: humanoid_chat/3.9.19 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
 bangumi_timeout_seconds: 12
 bangumi_search_limit: 5
 bangumi_character_limit: 10

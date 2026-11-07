@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.18",
+    version="3.9.19",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -2250,7 +2250,17 @@ def _render_ai_bans(items: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _prepare_qzone_images(images: List[str]) -> List[str]:
+def _match_ai_ban(text: str, items: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    normalized = _normalize_for_repeat(text).lower()
+    if not normalized:
+        return None
+    for item in items:
+        phrase = _normalize_for_repeat(str(item.get("phrase") or "")).lower()
+        if phrase and phrase in normalized:
+            return item
+    return None
+
+
     prepared: List[str] = []
     for raw in images:
         value = str(raw or "").strip()
@@ -4782,6 +4792,7 @@ async def _send_parts(
         return
     send_started = _now()
     total = len(parts)
+    ai_ban_items = list((await _load_ai_bans()).get("items") or [])
 
     thinking = random.uniform(config.thinking_delay_min, config.thinking_delay_max)
     thinking *= _night_factor_delay() * _energy_delay_factor(state)
@@ -4840,6 +4851,13 @@ async def _send_parts(
 
         text = _strip_punctuation(text)
         if not text:
+            continue
+        banned = _match_ai_ban(text, ai_ban_items)
+        if banned:
+            _log(
+                "info",
+                f"拦截禁止表达: {chat_key} phrase={banned.get('phrase')} text={text[:80]}",
+            )
             continue
 
         await _raw_send_text(chat_key, text, ctx, record=record, ref_msg_id=current_ref)
