@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.22",
+    version="3.9.23",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -519,6 +519,37 @@ class HumanoidConfig(ConfigBase):
         default="",
         title="【本群档案】档案目录",
         description="留空使用插件数据目录下的 group_profiles；也可填绝对路径。",
+    )
+    group_atmosphere_enabled: bool = Field(
+        default=True,
+        title="【群氛围】启用群氛围摘要",
+        description="只对群聊生效，定期总结最近在聊什么和群内气氛。",
+    )
+    group_atmosphere_interval_minutes: int = Field(
+        default=360,
+        ge=10,
+        title="【群氛围】摘要间隔（分钟）",
+        description="距离上次成功摘要满多少分钟后再生成，默认 360。",
+    )
+    group_atmosphere_min_messages: int = Field(
+        default=10,
+        ge=1,
+        title="【群氛围】最少消息数",
+        description="新消息少于该数量时暂不生成，避免浪费 token。",
+    )
+    group_atmosphere_max_messages: int = Field(
+        default=80,
+        ge=10,
+        le=300,
+        title="【群氛围】最多消息数",
+        description="每次生成摘要最多读取多少条群消息。",
+    )
+    group_atmosphere_max_chars: int = Field(
+        default=200,
+        ge=40,
+        le=1000,
+        title="【群氛围】摘要长度",
+        description="生成的摘要最多保留多少字。",
     )
     group_role_cache_minutes: int = Field(
         default=10,
@@ -2466,6 +2497,12 @@ def _default_chat_state() -> Dict[str, Any]:
         "proactive_count": 0,
         "last_proactive": 0.0,
         "recent_topics": [],
+        "atmosphere_summary": "",
+        "atmosphere_updated_at": 0.0,
+        "atmosphere_last_checked_at": 0.0,
+        "atmosphere_last_message_id": "",
+        "atmosphere_source_count": 0,
+        "ai_ban_recent": [],
         "bot_msg_count": 0,
     }
 
@@ -3940,6 +3977,123 @@ async def humanoid_mood_cmd(context: CommandExecutionContext) -> CommandResponse
 
 
 @plugin.mount_command(
+    name="humanoid_stats",
+    description="查看当前会话的完整拟人调试状态",
+    aliases=["拟人调试"],
+    usage="humanoid_stats",
+    permission=CommandPermission.SUPER_USER,
+    category="拟人",
+)
+async def humanoid_stats_cmd(context: CommandExecutionContext) -> CommandResponse:
+    chat_key = (context.chat_key or "").strip()
+    if not chat_key:
+        return CmdCtl.failed("无法识别当前会话。")
+    state = await _load_chat_state(chat_key)
+    energy = float(state.get("energy", config.energy_start))
+    patience = float(state.get("patience", config.patience_start))
+    valence = float(state.get("valence", config.mood_baseline))
+    mood_label = str(state.get("mood_label") or "").strip() or _raw_mood_label(valence, energy, patience)
+    mood_reason = _mood_reason_for_prompt(state)
+    favorability_score = await _get_favorability_score(chat_key, str(context.user_id or ""))
+    favorability_factor = _favorability_reply_factor(favorability_score)
+    block_probability, severity = _low_resource_block_probability(state)
+    if not config.low_resource_ignore_enabled:
+        block_probability = 0.0
+        severity = 0.0
+    else:
+        block_probability = _clamp(block_probability * _favorability_block_factor(favorability_score), 0.0, 1.0)
+    is_group = chat_key.startswith("onebot_v11-group_")
+    night = _is_night()
+    if is_group:
+        direct_reply = 0.0 if night and not config.night_direct_reply else 1.0 - block_probability
+        name_chance = _clamp(
+            config.keyword_reply_probability
+            * _night_factor_reply()
+            * _energy_reply_factor(state)
+            * _patience_reply_factor(state)
+            * favorability_factor,
+            0.0,
+            1.0,
+        )
+    else:
+        direct_reply = 0.0 if night and not config.night_direct_reply else 1.0
+        name_chance = None
+    ai_bans = await _load_ai_bans()
+    ban_items = list(ai_bans.get("items") or [])
+    cache = _TRIGGER_CACHE.get(chat_key, {})
+    lines = [
+        f"会话：{chat_key}",
+        f"时间：{_local_now().strftime('%m-%d %H:%M')}（{'夜间' if night else '白天'}）",
+        f"精力：{energy:.1f}/100 | 耐心：{patience:.1f}/100",
+        f"心情：{mood_label}（{valence:.0f}/100）",
+    ]
+    if mood_reason:
+        lines.append(f"心情原因：{mood_reason}")
+    lines.extend(
+        [
+            f"好感度：{favorability_score:.0f}/100（系数 {favorability_factor:.3f}）",
+            f"低状态权重：{severity:.3f} | 拒回：{block_probability * 100:.1f}%",
+            f"@/引用回复：{direct_reply * 100:.1f}%",
+        ]
+    )
+    if name_chance is not None:
+        lines.append(f"叫名字触发：{name_chance * 100:.1f}%")
+    lines.append(f"AI ban 规则：{len(ban_items)} 条")
+    recent_bans = state.get("ai_ban_recent") if isinstance(state.get("ai_ban_recent"), list) else []
+    for event in recent_bans[-3:]:
+        ts = float(event.get("ts") or 0)
+        when = datetime.fromtimestamp(ts).strftime("%m-%d %H:%M") if ts else "未知"
+        lines.append(
+            f"  最近 {when} {event.get('phrase')} | {event.get('action')} | "
+            f"{event.get('before')}"
+        )
+    atmosphere = str(state.get("atmosphere_summary") or "").strip()
+    if atmosphere:
+        updated = float(state.get("atmosphere_updated_at") or 0)
+        when = datetime.fromtimestamp(updated).strftime("%m-%d %H:%M") if updated else "未知"
+        lines.append(f"群氛围（{when}）：{atmosphere}")
+    else:
+        lines.append("群氛围：暂无")
+    if cache:
+        cache_time = float(cache.get("time") or 0)
+        when = datetime.fromtimestamp(cache_time).strftime("%m-%d %H:%M") if cache_time else "未知"
+        lines.append(f"最近触发：{cache.get('reason') or '-'}（{when}）")
+    lines.append(f"主动冒泡：{'开启' if config.proactive_enabled else '关闭'} | 群安静约 {int(_group_idle_minutes(chat_key))} 分钟")
+    return CmdCtl.success("\n".join(lines))
+
+
+@plugin.mount_command(
+    name="humanoid_atmosphere",
+    description="查看当前群氛围摘要；带 refresh 强制重新生成",
+    aliases=["群氛围"],
+    usage="humanoid_atmosphere [refresh]",
+    permission=CommandPermission.SUPER_USER,
+    category="拟人",
+)
+async def humanoid_atmosphere_cmd(
+    context: CommandExecutionContext,
+    action: Annotated[str, Arg("留空查看缓存；refresh 强制刷新", positional=True)] = "",
+) -> CommandResponse:
+    chat_key = (context.chat_key or "").strip()
+    if not chat_key.startswith("onebot_v11-group_"):
+        return CmdCtl.failed("群氛围只支持群聊。")
+    force = action.strip().lower() in {"refresh", "--refresh", "刷新"}
+    if force:
+        await _atmosphere_tick(chat_key, force=True)
+    state = await _load_chat_state(chat_key)
+    summary = str(state.get("atmosphere_summary") or "").strip()
+    if not summary:
+        return CmdCtl.failed("当前群还没有群氛围摘要，可执行 /humanoid_atmosphere refresh 生成。")
+    updated = float(state.get("atmosphere_updated_at") or 0)
+    when = datetime.fromtimestamp(updated).strftime("%m-%d %H:%M") if updated else "未知"
+    return CmdCtl.success(
+        f"当前群氛围：{summary}\n"
+        f"更新时间：{when}\n"
+        f"基于消息：{int(state.get('atmosphere_source_count') or 0)} 条"
+    )
+
+
+@plugin.mount_command(
     name="group_learn",
     description="从近期群聊提取黑话候选，自动应用高置信度安全候选，其余保留编号审查",
     usage="group_learn [chat_key|群号|--all]",
@@ -5030,6 +5184,132 @@ async def _rewrite_ai_banned_text(
     return f"{prefix}{rewritten}".strip()
 
 
+def _record_ai_ban_event(
+    state: Dict[str, Any],
+    phrase: str,
+    action: str,
+    before: str,
+    after: str = "",
+) -> None:
+    events = state.get("ai_ban_recent")
+    if not isinstance(events, list):
+        events = []
+    events.append(
+        {
+            "ts": _now(),
+            "phrase": str(phrase or "")[:80],
+            "action": action,
+            "before": str(before or "")[:100],
+            "after": str(after or "")[:100],
+        }
+    )
+    state["ai_ban_recent"] = events[-10:]
+
+
+async def _load_atmosphere_transcript(chat_key: str, since_ts: float, max_messages: int) -> tuple[str, int, str]:
+    rows = (
+        await DBChatMessage.filter(chat_key=chat_key, send_timestamp__gt=int(since_ts))
+        .order_by("-send_timestamp")
+        .limit(max(100, max_messages * 4))
+        .all()
+    )
+    rows = list(reversed(rows))
+    lines: List[str] = []
+    for row in rows:
+        if str(getattr(row, "sender_id", "")) == "-1":
+            continue
+        text = str(getattr(row, "content_text", "") or "").strip()
+        if not text or text.startswith(("/", "[Image", "[卡片", "[合并转发")):
+            continue
+        text = re.sub(r"https?://\S+", "[链接]", text)
+        text = " ".join(text.split())[:120]
+        if not re.search(r"[0-9A-Za-z\u4e00-\u9fff]", text):
+            continue
+        name = str(getattr(row, "sender_nickname", "") or getattr(row, "sender_name", "") or "群友").strip()
+        lines.append(f"{name}: {text}")
+    if len(lines) > max_messages:
+        lines = lines[-max_messages:]
+    latest_message_id = str(getattr(rows[-1], "message_id", "") or "") if rows else ""
+    return "\n".join(lines), len(lines), latest_message_id
+
+
+async def _call_atmosphere_llm(transcript: str) -> str:
+    from nekro_agent.core.config import config as core_config
+    from nekro_agent.services.agent.openai import gen_openai_chat_response
+
+    model_group = core_config.get_model_group_info(core_config.USE_MODEL_GROUP)
+    response = await gen_openai_chat_response(
+        model=model_group.CHAT_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "你是群聊氛围观察助手，只输出简短摘要，不评价个人，不记录隐私。",
+            },
+            {
+                "role": "user",
+                "content": (
+                    "根据下面的群聊片段，用 1~2 句总结最近在聊什么、整体气氛如何。\n"
+                    "要求：不要列点、不要标题、不要复述聊天记录、不要提到具体隐私信息。\n"
+                    "只输出摘要正文。\n\n"
+                    f"{transcript}"
+                ),
+            },
+        ],
+        api_key=model_group.API_KEY,
+        base_url=model_group.BASE_URL,
+        proxy_url=getattr(model_group, "CHAT_PROXY", "") or None,
+        temperature=0.4,
+        max_tokens=300,
+        max_wait_time=60,
+    )
+    return str(getattr(response, "response_content", "") or "").strip()
+
+
+async def _atmosphere_tick(chat_key: str, force: bool = False) -> bool:
+    if not config.group_atmosphere_enabled or "group" not in chat_key:
+        return False
+    now = _now()
+    state = await _load_chat_state(chat_key)
+    last_checked = float(state.get("atmosphere_last_checked_at") or 0)
+    updated_at = float(state.get("atmosphere_updated_at") or 0)
+    if not force and last_checked and now - last_checked < 600:
+        return False
+    interval = max(60, int(config.group_atmosphere_interval_minutes) * 60)
+    if not force and updated_at and now - updated_at < interval:
+        return False
+    since = updated_at or (now - interval)
+    transcript, source_count, latest_message_id = await _load_atmosphere_transcript(
+        chat_key,
+        since,
+        max(10, int(config.group_atmosphere_max_messages)),
+    )
+    state["atmosphere_last_checked_at"] = now
+    if source_count < max(1, int(config.group_atmosphere_min_messages)) and not force:
+        await _save_chat_state(chat_key, state)
+        return False
+    if not transcript:
+        await _save_chat_state(chat_key, state)
+        return False
+    try:
+        summary = await _call_atmosphere_llm(transcript)
+    except Exception as exc:
+        _log("warning", f"群氛围摘要失败 {chat_key}: {type(exc).__name__}: {exc}")
+        await _save_chat_state(chat_key, state)
+        return False
+    summary = " ".join(summary.split()).strip()
+    if not summary:
+        await _save_chat_state(chat_key, state)
+        return False
+    summary = _clip_text(summary, max(40, int(config.group_atmosphere_max_chars)))
+    state["atmosphere_summary"] = summary
+    state["atmosphere_updated_at"] = now
+    state["atmosphere_last_message_id"] = latest_message_id
+    state["atmosphere_source_count"] = source_count
+    await _save_chat_state(chat_key, state)
+    _log("info", f"群氛围摘要: {chat_key} source={source_count} summary={summary}")
+    return True
+
+
 async def _send_parts(
     chat_key: str,
     parts: List[str],
@@ -5113,12 +5393,16 @@ async def _send_parts(
                     f"AI味改写: {chat_key} phrase={banned.get('phrase')} "
                     f"before={original_banned_text[:60]} after={rewritten[:60]}",
                 )
+                _record_ai_ban_event(state, str(banned.get("phrase") or ""), "rewritten", original_banned_text, rewritten)
+                await _save_chat_state(chat_key, state)
                 text = rewritten
             else:
                 _log(
                     "info",
                     f"拦截禁止表达: {chat_key} phrase={banned.get('phrase')} text={original_banned_text[:80]}",
                 )
+                _record_ai_ban_event(state, str(banned.get("phrase") or ""), "blocked", original_banned_text)
+                await _save_chat_state(chat_key, state)
                 continue
 
         await _raw_send_text(chat_key, text, ctx, record=record, ref_msg_id=current_ref)
@@ -6122,6 +6406,9 @@ send_msg_text(_ck, "内容")
             last_topics = [str(item.get("text") or "")[:30] for item in recent_topics[-2:] if item.get("text")]
             if last_topics:
                 lines.append("刚才群里聊到：" + " / ".join(last_topics) + "。")
+        atmosphere = str(state.get("atmosphere_summary") or "").strip()
+        if atmosphere:
+            lines.append(f"最近群氛围：{atmosphere}")
         if int(state.get("ignored_streak") or 0) > 0:
             lines.append("上次你主动说话没人接：先别急着再开口，除非现在确实有话可说。")
 
@@ -6463,7 +6750,7 @@ def _group_idle_minutes(chat_key: str) -> float:
 
 
 def _ensure_background_loop(chat_key: str) -> None:
-    if not config.proactive_enabled:
+    if not config.proactive_enabled and not config.group_atmosphere_enabled:
         return
     existing = _BG_TASKS.get(chat_key)
     if existing and not existing.done():
@@ -6475,10 +6762,15 @@ async def _proactive_loop(chat_key: str) -> None:
     try:
         await asyncio.sleep(random.uniform(20, 60))
         while True:
-            if not config.proactive_enabled:
-                await asyncio.sleep(60)
-                continue
-            await _proactive_tick(chat_key)
+            if config.group_atmosphere_enabled:
+                try:
+                    await _atmosphere_tick(chat_key)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    _log("warning", f"群氛围后台检查失败 {chat_key}: {type(exc).__name__}: {exc}")
+            if config.proactive_enabled:
+                await _proactive_tick(chat_key)
             await asyncio.sleep(60)
     except asyncio.CancelledError:
         raise

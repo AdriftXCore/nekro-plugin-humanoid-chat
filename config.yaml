@@ -67,6 +67,11 @@ memory_limit: 8
 enable_memory: true
 group_profile_enabled: true
 group_profile_dir: ''
+group_atmosphere_enabled: true
+group_atmosphere_interval_minutes: 360
+group_atmosphere_min_messages: 10
+group_atmosphere_max_messages: 80
+group_atmosphere_max_chars: 200
 group_role_cache_minutes: 10
 group_profile_max_chars: 2400
 group_profile_member_limit: 8
@@ -136,7 +141,7 @@ quoted_link_always_fetch: true
 bangumi_enabled: true
 bangumi_access_token: ''
 bangumi_base_url: https://api.bgm.tv
-bangumi_user_agent: humanoid_chat/3.9.22 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
+bangumi_user_agent: humanoid_chat/3.9.23 (Nekro Agent; +https://github.com/AdriftXCore/nekro-plugin-humanoid-chat)
 bangumi_timeout_seconds: 12
 bangumi_search_limit: 5
 bangumi_character_limit: 10
