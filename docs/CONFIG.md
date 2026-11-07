@@ -206,7 +206,7 @@
 | `bangumi_enabled` | `True` | 【Bangumi】启用动漫搜索、条目详情、角色和每日放送工具。 |
 | `bangumi_access_token` | 空 | 【Bangumi】Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。 |
 | `bangumi_base_url` | `https://api.bgm.tv` | 【Bangumi】API 地址。 |
-| `bangumi_user_agent` | `humanoid_chat/3.9.19 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
+| `bangumi_user_agent` | `humanoid_chat/3.9.20 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
 | `bangumi_timeout_seconds` | `12` | 【Bangumi】单次请求超时（秒）。 |
 | `bangumi_search_limit` | `5` | 【Bangumi】搜索结果数。 |
 | `bangumi_character_limit` | `10` | 【Bangumi】角色结果数。 |

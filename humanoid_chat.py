@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.19",
+    version="3.9.20",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -2222,8 +2222,9 @@ async def _remove_ai_ban(selector: str) -> str:
         return "请提供编号或原话。"
     removed = None
     if raw.isdigit():
-        target_id = int(raw)
-        removed = next((item for item in items if int(item.get("id") or 0) == target_id), None)
+        index = int(raw) - 1
+        if 0 <= index < len(items):
+            removed = items[index]
     if removed is None:
         raw_lower = _normalize_ai_ban_phrase(raw).lower()
         removed = next(
@@ -2242,9 +2243,9 @@ async def _remove_ai_ban(selector: str) -> str:
 
 
 def _render_ai_bans(items: List[Dict[str, Any]]) -> str:
-    lines = [f"当前禁止表达（共 {len(items)} 条，最多注入 30 条）："]
-    for item in items[-30:]:
-        lines.append(f"{item.get('id')}. {item.get('phrase')} | 原因：{item.get('reason')}")
+    lines = [f"当前禁止表达（共 {len(items)} 条，注入最近 30 条）："]
+    for index, item in enumerate(items, 1):
+        lines.append(f"{index}. {item.get('phrase')} | 原因：{item.get('reason')}")
     if not items:
         lines = ["当前还没有禁止表达。"]
     return "\n".join(lines)

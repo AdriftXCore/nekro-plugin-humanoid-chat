@@ -4,7 +4,7 @@
 
 > 插件文件：`humanoid_chat.py`
 >
-> 当前版本：`3.9.19`
+> 当前版本：`3.9.20`
 >
 > 适用：Nekro Agent `2.4.x+`
 >
@@ -399,7 +399,7 @@ Nekro Agent 自带：
   /ai_ban 这话我不太同意 => 太像AI，禁止使用
   ```
 - 查看：`/ai_ban_list`
-- 移除：`/ai_ban_remove <编号|原话>`
+- 移除：`/ai_ban_remove <编号|原话>`，编号就是 `/ai_ban_list` 显示的 1、2、3
 - 最多保存 100 条，每轮最多注入最近 30 条
 
 ### `/force_mute`
