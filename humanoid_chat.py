@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.21",
+    version="3.9.22",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -321,6 +321,11 @@ class HumanoidConfig(ConfigBase):
         le=1440,
         title="【情绪】心情原因有效期（分钟）",
         description="原因超过该时间后不再注入提示词，只保留心情状态。",
+    )
+    ai_ban_rewrite_enabled: bool = Field(
+        default=True,
+        title="【表达】AI 味命中后自动改写",
+        description="发送前命中禁止表达时，先让模型改写一次；改写后仍命中才丢弃。",
     )
     energy_enabled: bool = Field(
         default=True,
@@ -4956,6 +4961,75 @@ def _mark_first_reply_done(chat_key: str, policy: Dict[str, Any]) -> None:
     cache["first_reply_done"] = True
 
 
+async def _rewrite_ai_banned_text(
+    chat_key: str,
+    text: str,
+    banned_items: List[Dict[str, Any]],
+) -> str:
+    if not config.ai_ban_rewrite_enabled:
+        return ""
+    prefix = ""
+    body = text
+    match = re.match(r"^((?:\s*\[@id:[^\]]+@\]\s*)+)(.*)$", text)
+    if match:
+        prefix = match.group(1)
+        body = match.group(2).strip()
+    if not body:
+        return ""
+    rules = "；".join(
+        f"「{_clip_text(str(item.get('phrase') or ''), 40)}」"
+        for item in banned_items[-30:]
+        if item.get("phrase")
+    )
+    if not rules:
+        return ""
+    context = str(_LAST_INBOUND_TEXT.get(chat_key) or "").strip()[:200]
+    try:
+        from nekro_agent.core.config import config as core_config
+        from nekro_agent.services.agent.openai import gen_openai_chat_response
+
+        model_group = core_config.get_model_group_info(core_config.USE_MODEL_GROUP)
+        response = await gen_openai_chat_response(
+            model=model_group.CHAT_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "你是群聊拟人改写助手，只输出改写后的聊天短句，不解释。",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "把下面这句被判定为 AI 味的回复改写得像真人接话。\n"
+                        f"原始回复：{body}\n"
+                        f"最近用户消息：{context or '无'}\n"
+                        f"禁止表达：{rules}\n"
+                        "要求：\n"
+                        "- 保持原意和情绪，不要变成客服腔\n"
+                        "- 1 句，尽量不超过 30 字\n"
+                        "- 不要出现任何禁止表达或同类总结式、客服式、套话\n"
+                        "- 不要解释、不要加引号、不要输出 Markdown\n"
+                        "- 只输出改写后的句子"
+                    ),
+                },
+            ],
+            api_key=model_group.API_KEY,
+            base_url=model_group.BASE_URL,
+            proxy_url=getattr(model_group, "CHAT_PROXY", "") or None,
+            temperature=0.7,
+            max_tokens=256,
+            max_wait_time=30,
+        )
+        rewritten = str(getattr(response, "response_content", "") or "").strip()
+    except Exception as exc:
+        _log("warning", f"AI味改写失败: {type(exc).__name__}: {exc}")
+        return ""
+    rewritten = rewritten.strip().strip('"\'“”「」').strip()
+    if not rewritten:
+        return ""
+    rewritten = _strip_punctuation(rewritten)
+    return f"{prefix}{rewritten}".strip()
+
+
 async def _send_parts(
     chat_key: str,
     parts: List[str],
@@ -5031,11 +5105,21 @@ async def _send_parts(
             continue
         banned = _match_ai_ban(text, ai_ban_items)
         if banned:
-            _log(
-                "info",
-                f"拦截禁止表达: {chat_key} phrase={banned.get('phrase')} text={text[:80]}",
-            )
-            continue
+            original_banned_text = text
+            rewritten = await _rewrite_ai_banned_text(chat_key, text, ai_ban_items)
+            if rewritten and not _match_ai_ban(rewritten, ai_ban_items):
+                _log(
+                    "info",
+                    f"AI味改写: {chat_key} phrase={banned.get('phrase')} "
+                    f"before={original_banned_text[:60]} after={rewritten[:60]}",
+                )
+                text = rewritten
+            else:
+                _log(
+                    "info",
+                    f"拦截禁止表达: {chat_key} phrase={banned.get('phrase')} text={original_banned_text[:80]}",
+                )
+                continue
 
         await _raw_send_text(chat_key, text, ctx, record=record, ref_msg_id=current_ref)
         await _note_bot_send(chat_key, text)

@@ -59,6 +59,7 @@
 | `mood_state_enabled` | `True` | 【情绪】启用心情状态：映射为兴奋、开心、平静、低落、烦躁、疲惫。 |
 | `mood_state_hysteresis` | `5` | 【情绪】心情状态防抖：越过阈值多少点才切换，避免抖动。 |
 | `mood_reason_ttl_minutes` | `30` | 【情绪】心情原因有效期：超过后不再注入提示词。 |
+| `ai_ban_rewrite_enabled` | `True` | 【表达】命中 AI ban 后先自动改写一次；改写后仍命中才丢弃。 |
 | `patience_start` | `70` | 【情绪】初始耐心：被连续轰炸或被无视会降低耐心。 |
 | `patience_recover_per_hour` | `8.0` | 【情绪】耐心每小时恢复：耐心随时间恢复的速度。 |
 | `rapid_message_window` | `8.0` | 【情绪】连续消息判定窗口（秒）：同一用户在该时间内继续发消息，视为连续轰炸。 |
@@ -209,7 +210,7 @@
 | `bangumi_enabled` | `True` | 【Bangumi】启用动漫搜索、条目详情、角色和每日放送工具。 |
 | `bangumi_access_token` | 空 | 【Bangumi】Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。 |
 | `bangumi_base_url` | `https://api.bgm.tv` | 【Bangumi】API 地址。 |
-| `bangumi_user_agent` | `humanoid_chat/3.9.21 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
+| `bangumi_user_agent` | `humanoid_chat/3.9.22 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
 | `bangumi_timeout_seconds` | `12` | 【Bangumi】单次请求超时（秒）。 |
 | `bangumi_search_limit` | `5` | 【Bangumi】搜索结果数。 |
 | `bangumi_character_limit` | `10` | 【Bangumi】角色结果数。 |
