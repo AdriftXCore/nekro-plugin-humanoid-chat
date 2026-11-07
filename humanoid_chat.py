@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.23",
+    version="3.9.25",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -3947,6 +3947,34 @@ async def ai_ban_remove_cmd(
 
 
 @plugin.mount_command(
+    name="ai_ban_test",
+    description="测试一段文本是否会命中 AI ban，不调用模型",
+    aliases=["测试禁说", "AI味测试"],
+    usage="ai_ban_test <文本>",
+    permission=CommandPermission.SUPER_USER,
+    category="拟人",
+)
+async def ai_ban_test_cmd(
+    context: CommandExecutionContext,
+    text: Annotated[str, Arg("要测试的文本", positional=True, greedy=True)] = "",
+) -> CommandResponse:
+    raw = str(text or "").strip()
+    if not raw:
+        return CmdCtl.failed("用法：/ai_ban_test <文本>")
+    data = await _load_ai_bans()
+    items = list(data.get("items") or [])
+    matched = _match_ai_ban(raw, items)
+    if not matched:
+        return CmdCtl.success(f"未命中 AI ban（当前共 {len(items)} 条规则）。")
+    action = "会先尝试自动改写，改写后仍命中才拦截" if config.ai_ban_rewrite_enabled else "会被直接拦截"
+    return CmdCtl.success(
+        f"命中 #{matched.get('id', '?')}：{matched.get('phrase', '')}\n"
+        f"原因：{matched.get('reason', '') or '未填写'}\n"
+        f"处理：{action}"
+    )
+
+
+@plugin.mount_command(
     name="humanoid_mood",
     description="查看当前会话的心情状态、心情值和原因",
     aliases=["心情状态"],
@@ -5170,7 +5198,7 @@ async def _rewrite_ai_banned_text(
             base_url=model_group.BASE_URL,
             proxy_url=getattr(model_group, "CHAT_PROXY", "") or None,
             temperature=0.7,
-            max_tokens=256,
+            max_tokens=768,
             max_wait_time=30,
         )
         rewritten = str(getattr(response, "response_content", "") or "").strip()
