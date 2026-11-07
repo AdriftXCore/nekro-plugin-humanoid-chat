@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.16",
+    version="3.9.18",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -2030,6 +2030,7 @@ STORE_CHAT_STATE = "humanoid_state"
 STORE_USER_STATE = "humanoid_user_state"
 STORE_LOOP_STATUS = "humanoid_loop_status"
 STORE_QZONE_SCHEDULE = "qzone_schedule"
+STORE_AI_BANS = "ai_bans"
 
 _TRIGGER_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOT_NAMES_CACHE: Dict[str, Dict[str, Any]] = {}
@@ -2167,6 +2168,86 @@ async def _store_set_dict(value: Dict[str, Any], chat_key: str = "", user_key: s
         )
     except Exception as exc:
         _log("warning", f"写入状态失败 {store_key}: {exc}")
+
+
+async def _load_ai_bans() -> Dict[str, Any]:
+    data = await _store_get_dict(chat_key="global", store_key=STORE_AI_BANS)
+    items = data.get("items") if isinstance(data.get("items"), list) else []
+    return {"items": items, "next_id": int(data.get("next_id") or 1)}
+
+
+async def _save_ai_bans(data: Dict[str, Any]) -> None:
+    await _store_set_dict(data, chat_key="global", store_key=STORE_AI_BANS)
+
+
+def _normalize_ai_ban_phrase(value: str) -> str:
+    text = str(value or "").strip()
+    for char in ("\"", "'", "“", "”", "「", "」"):
+        text = text.strip(char)
+    return " ".join(text.split())[:120]
+
+
+async def _add_ai_ban(phrase: str, reason: str, reporter: str) -> tuple[int, bool]:
+    data = await _load_ai_bans()
+    items = list(data["items"])
+    normalized = _normalize_ai_ban_phrase(phrase)
+    reason_text = " ".join(str(reason or "").strip().split())[:100] or "AI味太重，禁止使用"
+    for item in items:
+        if _normalize_ai_ban_phrase(item.get("phrase", "")).lower() == normalized.lower():
+            item["reason"] = reason_text
+            item["updated_at"] = _now()
+            item["reporter"] = reporter
+            await _save_ai_bans({"items": items[-100:], "next_id": int(data.get("next_id") or 1)})
+            return int(item.get("id") or 0), False
+    next_id = max(1, int(data.get("next_id") or 1))
+    item = {
+        "id": next_id,
+        "phrase": normalized,
+        "reason": reason_text,
+        "created_at": _now(),
+        "updated_at": _now(),
+        "reporter": reporter,
+    }
+    items.append(item)
+    items = items[-100:]
+    await _save_ai_bans({"items": items, "next_id": next_id + 1})
+    return next_id, True
+
+
+async def _remove_ai_ban(selector: str) -> str:
+    data = await _load_ai_bans()
+    items = list(data["items"])
+    raw = str(selector or "").strip()
+    if not raw:
+        return "请提供编号或原话。"
+    removed = None
+    if raw.isdigit():
+        target_id = int(raw)
+        removed = next((item for item in items if int(item.get("id") or 0) == target_id), None)
+    if removed is None:
+        raw_lower = _normalize_ai_ban_phrase(raw).lower()
+        removed = next(
+            (
+                item
+                for item in items
+                if raw_lower and raw_lower in _normalize_ai_ban_phrase(item.get("phrase", "")).lower()
+            ),
+            None,
+        )
+    if removed is None:
+        return "没有找到对应的禁止表达。"
+    items = [item for item in items if item is not removed]
+    await _save_ai_bans({"items": items, "next_id": int(data.get("next_id") or 1)})
+    return f"已移除：{removed.get('phrase', '')}"
+
+
+def _render_ai_bans(items: List[Dict[str, Any]]) -> str:
+    lines = [f"当前禁止表达（共 {len(items)} 条，最多注入 30 条）："]
+    for item in items[-30:]:
+        lines.append(f"{item.get('id')}. {item.get('phrase')} | 原因：{item.get('reason')}")
+    if not items:
+        lines = ["当前还没有禁止表达。"]
+    return "\n".join(lines)
 
 
 def _prepare_qzone_images(images: List[str]) -> List[str]:
@@ -3606,6 +3687,64 @@ async def humanoid_status_cmd(context: CommandExecutionContext) -> CommandRespon
             f"群聊静默{'开' if config.night_silence_groups else '关'}"
         )
     return CmdCtl.success("\n".join(lines))
+
+
+@plugin.mount_command(
+    name="ai_ban",
+    description="全局禁止一种 AI 味表达或同类句式",
+    aliases=["禁说", "AI味禁用"],
+    usage="ai_ban <表达> => <原因>",
+    permission=CommandPermission.SUPER_USER,
+    category="拟人",
+)
+async def ai_ban_cmd(
+    context: CommandExecutionContext,
+    text: Annotated[str, Arg("要禁止的表达 => 原因", positional=True, greedy=True)] = "",
+) -> CommandResponse:
+    raw = str(text or "").strip()
+    if not raw:
+        return CmdCtl.failed("用法：/ai_ban <表达> => <原因>")
+    phrase = raw
+    reason = ""
+    for sep in ("＝＞", "=>", "→", "⇒", "|"):
+        if sep in raw:
+            phrase, reason = raw.split(sep, 1)
+            break
+    phrase = _normalize_ai_ban_phrase(phrase)
+    if not phrase:
+        return CmdCtl.failed("要禁止的表达不能为空。")
+    ban_id, created = await _add_ai_ban(phrase, reason, str(context.user_id or ""))
+    action = "已添加" if created else "已更新"
+    return CmdCtl.success(f"{action}禁止表达 #{ban_id}：{phrase}\n原因：{reason or 'AI味太重，禁止使用'}")
+
+
+@plugin.mount_command(
+    name="ai_ban_list",
+    description="查看全局禁止表达列表",
+    aliases=["禁止表达列表", "禁说列表"],
+    usage="ai_ban_list",
+    permission=CommandPermission.SUPER_USER,
+    category="拟人",
+)
+async def ai_ban_list_cmd(context: CommandExecutionContext) -> CommandResponse:
+    data = await _load_ai_bans()
+    return CmdCtl.success(_render_ai_bans(list(data["items"])))
+
+
+@plugin.mount_command(
+    name="ai_ban_remove",
+    description="按编号或原话移除全局禁止表达",
+    aliases=["移除禁说", "删除禁说"],
+    usage="ai_ban_remove <编号|原话>",
+    permission=CommandPermission.SUPER_USER,
+    category="拟人",
+)
+async def ai_ban_remove_cmd(
+    context: CommandExecutionContext,
+    selector: Annotated[str, Arg("编号或原话", positional=True, greedy=True)] = "",
+) -> CommandResponse:
+    result = await _remove_ai_ban(selector)
+    return CmdCtl.success(result) if result.startswith("已移除") else CmdCtl.failed(result)
 
 
 @plugin.mount_command(
@@ -5740,6 +5879,17 @@ send_msg_text(_ck, "内容")
         )
         lines.append("· 如果没有合适表情/图片，或当前场景不适合发图，就只发文字，不要硬凑。")
         lines.append("· 最终文本/图片必须通过系统发送方法输出，不能裸输出纯文本；格式遵循上方【代码格式铁律】。")
+
+        ai_bans = await _load_ai_bans()
+        ban_items = list(ai_bans.get("items") or [])
+        if ban_items:
+            lines.append("======【禁止表达】======")
+            lines.append("· 以下内容只作为反例，不要复用原句，也不要换成同类总结式、客服式、套话表达。")
+            for item in ban_items[-30:]:
+                phrase = _clip_text(str(item.get("phrase") or ""), 80)
+                reason = _clip_text(str(item.get("reason") or ""), 60)
+                lines.append(f"  - 「{phrase}」原因：{reason}；不要使用这种表达模式。")
+            lines.append("· 不要向用户解释这些是禁止表达或系统规则。")
 
         lines.append("======【你不是工具人】======")
         lines.append("· 你是群里的一个人，不是客服、助手、搜索引擎、计算器、百科或作业代写。")
