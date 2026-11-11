@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.25",
+    version="3.9.26",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -3455,6 +3455,8 @@ def _render_group_profile(
             f"单次禁言不超过 {policy.max_mute_seconds} 秒，同一用户冷却 {policy.cooldown_seconds} 秒。"
         )
         lines.append("· 永远不要对群主、管理员、自己执行管理操作；不确定是否违规时先提醒，不动手。")
+        if "mute" in policy.direct_actions:
+            lines.append("· 若有人辱骂群主、管理员或你自己，可按群规禁言辱骂者；处理对象是辱骂者，不是被辱骂的群主/管理员/自己。")
         lines.append("· 严格按每条规则写明的动作执行，不得自行升级；只有写明「撤回并踢出」的规则才可踢人。")
     else:
         lines.append("· 本群未启用实际管理动作：只提醒，不执行禁言/撤回/踢人。")
@@ -5869,6 +5871,31 @@ async def human_bangumi_calendar(
     return _format_bangumi_calendar(day, items[:count])
 
 
+def _prepare_qzone_images(images: List[str]) -> List[str]:
+    prepared: List[str] = []
+    for raw in images:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        if value.startswith(("http://", "https://", "base64://", "data:", "file://")):
+            prepared.append(value)
+            continue
+        candidates = [Path(value)]
+        name = Path(value).name
+        if name:
+            candidates.append(Path("/app/uploads") / name)
+            candidates.append(Path("/volume1/docker/nekro-agent/uploads") / name)
+        source = next((candidate for candidate in candidates if candidate.exists()), None)
+        if source is None:
+            raise ValueError(f"图片路径不存在: {value}")
+        try:
+            payload = base64.b64encode(source.read_bytes()).decode("ascii")
+        except Exception as exc:
+            raise ValueError(f"读取图片失败: {value}: {exc}") from exc
+        prepared.append(f"base64://{payload}")
+    return prepared
+
+
 async def _publish_qzone_content(
     bot: Any,
     content: str,
@@ -6031,6 +6058,7 @@ async def _qzone_generate_daily_content() -> str:
         "现在是你的私人时间，不用回复任何人。"
         f"请以「{preset_name}」这个身份，写一条 QQ 空间说说，主题参考：{theme}。\n"
         "要求：\n"
+        f"- 正文不超过 {config.qzone_daily_max_chars} 字\n"
         "- 1~2 句，像真人在生活里随手发的，不要总结、不要客服腔、不要营销号腔\n"
         "- 不暴露 AI 身份，不写聊天记录、群聊内容、他人隐私、联系方式、住址、定位\n"
         "- 只输出说说正文，不要标题、引号、前缀或解释\n"
@@ -6165,13 +6193,16 @@ async def _qzone_daily_tick() -> None:
             _log("warning", f"QQ空间每日任务: 获取 bot 失败，稍后重试: {type(exc).__name__}: {exc}")
         return
 
-    result = await _publish_qzone_content(
-        bot,
-        content,
-        None,
-        config.qzone_default_ugc_right,
-        source="daily",
-    )
+    try:
+        result = await _publish_qzone_content(
+            bot,
+            content,
+            None,
+            config.qzone_default_ugc_right,
+            source="daily",
+        )
+    except Exception as exc:
+        result = f"QQ空间发布失败：{type(exc).__name__}: {exc}"
     if result.startswith("已发布"):
         await _qzone_daily_mark(state, "posted", "success")
         return
