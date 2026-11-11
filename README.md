@@ -4,7 +4,7 @@
 
 > 插件文件：`humanoid_chat.py`
 >
-> 当前版本：`3.9.27`
+> 当前版本：`3.9.28`
 >
 > 适用：Nekro Agent `2.4.x+`
 >
@@ -712,7 +712,11 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `group_learn_inject_limit` | 每轮最多注入词条数，默认 6 |
 | `force_mute_default_seconds` | `/force_mute` 默认时长 |
 | `proactive_enabled` | 是否启用后台主动冒泡 |
-| `active_chat_probability` | 每轮主动冒泡概率，建议 0.02–0.08 |
+| `active_chat_probability` | 私聊每轮主动冒泡概率，默认 0 |
+| `group_active_chat_probability` | 群聊每轮主动冒泡概率，默认 0.03 |
+| `favorability_proactive_enabled` | 群聊主动冒泡是否受最近活跃用户好感度影响 |
+| `favorability_proactive_window_minutes` | 主动冒泡统计的最近活跃窗口，默认 15 分钟 |
+| `favorability_proactive_strength` | 好感度 100 时的最大冒泡加成，默认 0.15 |
 | `enable_sticker_coordination` | 是否与表情管理协作 |
 | `sticker_emotion_hint` | 情绪明显时是否提示发表情 |
 | `draw_refuse_enabled` | 是否启用画图概率拒绝 |

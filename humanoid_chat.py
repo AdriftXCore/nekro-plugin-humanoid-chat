@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.27",
+    version="3.9.28",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -496,6 +496,25 @@ class HumanoidConfig(ConfigBase):
         title="【关系】好感度缓存秒数",
         description="缓存读取到的好感度分数，避免每条消息查询数据库。",
     )
+    favorability_proactive_enabled: bool = Field(
+        default=True,
+        title="【关系】好感度影响群主动冒泡",
+        description="只对群聊生效；最近活跃用户中好感度最高的人会给主动冒泡概率加成。",
+    )
+    favorability_proactive_window_minutes: int = Field(
+        default=15,
+        ge=1,
+        le=1440,
+        title="【关系】主动冒泡好感活跃窗口（分钟）",
+        description="只统计最近多少分钟内发言过的用户。",
+    )
+    favorability_proactive_strength: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=1.0,
+        title="【关系】主动冒泡好感权重",
+        description="好感度 100 时给主动冒泡概率的最大提升比例；默认 0.15 即最多 +15%。",
+    )
     memory_limit: int = Field(
         default=8,
         ge=0,
@@ -752,7 +771,14 @@ class HumanoidConfig(ConfigBase):
         ge=0.0,
         le=1.0,
         title="【主动】每轮冒泡概率",
-        description="后台每轮检查时的基础冒泡概率；建议 0.02~0.08。",
+        description="私聊后台每轮检查时的基础冒泡概率；群聊使用 group_active_chat_probability。",
+    )
+    group_active_chat_probability: float = Field(
+        default=0.03,
+        ge=0.0,
+        le=1.0,
+        title="【主动】群聊每轮冒泡概率",
+        description="群聊后台每轮检查时的基础冒泡概率；建议 0.02~0.08。",
     )
     proactive_min_interval_minutes: int = Field(
         default=45,
@@ -2108,6 +2134,7 @@ _TRIGGER_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOT_NAMES_CACHE: Dict[str, Dict[str, Any]] = {}
 _LAST_UNMENTIONED_REPLY: Dict[str, float] = {}
 _FAVORABILITY_CACHE: Dict[Tuple[str, str], Tuple[float, float]] = {}
+_FAVORABILITY_STATE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 _PROCESSED_MSG_IDS: Set[str] = set()
 _GROUP_ACTIVITY: Dict[str, Deque[float]] = {}
 _LAST_INBOUND_TS: Dict[str, float] = {}
@@ -2762,7 +2789,64 @@ async def _get_favorability_score(chat_key: str, user_id: str) -> float:
     _FAVORABILITY_CACHE[cache_key] = (now + ttl, score)
     if len(_FAVORABILITY_CACHE) > 1000:
         _FAVORABILITY_CACHE.clear()
+    _FAVORABILITY_STATE_CACHE.clear()
     return score
+
+
+async def _get_favorability_state_snapshot(chat_key: str) -> Dict[str, Any]:
+    now = _now()
+    cached = _FAVORABILITY_STATE_CACHE.get(chat_key)
+    if cached and cached[0] > now:
+        return cached[1]
+    data: Dict[str, Any] = {}
+    try:
+        record = await DBPluginData.filter(
+            plugin_key="liugu.nekro_favorability",
+            target_chat_key=chat_key,
+            target_user_id="",
+            data_key="favorability_state",
+        ).first()
+        if record:
+            parsed = json.loads(record.data_value)
+            if isinstance(parsed, dict):
+                data = parsed
+    except Exception as exc:
+        _log("debug", f"读取好感度快照失败: {chat_key}: {type(exc).__name__}: {exc}")
+    _FAVORABILITY_STATE_CACHE[chat_key] = (now + 60, data)
+    return data
+
+
+def _favorability_proactive_factor(score: float) -> float:
+    if not config.favorability_proactive_enabled:
+        return 1.0
+    normalized = _clamp(float(score), 0.0, 100.0) / 100.0
+    return 1.0 + normalized * config.favorability_proactive_strength
+
+
+async def _get_recent_favorability_anchor(chat_key: str) -> Tuple[str, str, float]:
+    if not config.favorability_proactive_enabled or "group" not in chat_key:
+        return "", "", 0.0
+    snapshot = await _get_favorability_state_snapshot(chat_key)
+    profiles = snapshot.get("profiles") if isinstance(snapshot, dict) else None
+    if not isinstance(profiles, dict):
+        return "", "", 0.0
+    cutoff = _now() - max(1, int(config.favorability_proactive_window_minutes)) * 60
+    best_id = ""
+    best_name = ""
+    best_score = 0.0
+    for user_id, profile in profiles.items():
+        if not isinstance(profile, dict):
+            continue
+        last_ts = int(profile.get("last_user_message_at") or profile.get("last_interaction_at") or 0)
+        if last_ts < cutoff:
+            continue
+        score = _clamp(float(profile.get("score") or 0), 0.0, 100.0)
+        if score <= best_score:
+            continue
+        best_id = str(user_id)
+        best_name = str(profile.get("display_name") or user_id)
+        best_score = score
+    return best_id, best_name, best_score
 
 
 # ============================================================
@@ -4086,6 +4170,15 @@ async def humanoid_stats_cmd(context: CommandExecutionContext) -> CommandRespons
     )
     if name_chance is not None:
         lines.append(f"叫名字触发：{name_chance * 100:.1f}%")
+    if is_group and config.favorability_proactive_enabled:
+        anchor_id, anchor_name, anchor_score = await _get_recent_favorability_anchor(chat_key)
+        if anchor_id:
+            factor = _favorability_proactive_factor(anchor_score)
+            lines.append(
+                f"主动冒泡好感：{anchor_name}（{anchor_id}）{anchor_score:.0f}/100 | 系数 {factor:.3f}"
+            )
+        else:
+            lines.append("主动冒泡好感：最近没有活跃的高好感用户")
     lines.append(f"AI ban 规则：{len(ban_items)} 条")
     recent_bans = state.get("ai_ban_recent") if isinstance(state.get("ai_ban_recent"), list) else []
     for event in recent_bans[-3:]:
@@ -7032,7 +7125,7 @@ async def _proactive_tick(chat_key: str) -> None:
     if activity:
         recent_count = sum(1 for ts in activity if now - ts < 300)
 
-    probability = cfg.active_chat_probability
+    probability = cfg.group_active_chat_probability if "group" in chat_key else cfg.active_chat_probability
     probability *= _night_factor_reply()
     probability *= _energy_reply_factor(state)
     if count > 0:
@@ -7044,6 +7137,14 @@ async def _proactive_tick(chat_key: str) -> None:
     ignored = int(state.get("ignored_streak") or 0)
     if ignored > 0:
         probability *= max(0.15, 1.0 - ignored * 0.25)
+    fav_anchor_id = ""
+    fav_score = 0.0
+    fav_factor = 1.0
+    if "group" in chat_key and config.favorability_proactive_enabled:
+        fav_anchor_id, _, fav_score = await _get_recent_favorability_anchor(chat_key)
+        if fav_anchor_id:
+            fav_factor = _favorability_proactive_factor(fav_score)
+            probability *= fav_factor
     probability = _clamp(probability, 0.0, 1.0)
 
     if random.random() >= probability:
@@ -7070,7 +7171,11 @@ async def _proactive_tick(chat_key: str) -> None:
         "只发 1 句，不要提问式轰炸，不要复述状态数值。\n"
         "如果觉得没必要、群里气氛不适合、或你没什么想说：输出 `# 保持沉默`，不要调用发送方法。"
     )
-    _log("info", f"主动冒泡评估触发: {chat_key}")
+    _log(
+        "info",
+        f"主动冒泡评估触发: {chat_key} fav_user={fav_anchor_id or '-'} "
+        f"fav_score={fav_score:.0f} fav_factor={fav_factor:.3f}",
+    )
     await message.push_system(chat_key=chat_key, message=hint, trigger_agent=True)
 
 
