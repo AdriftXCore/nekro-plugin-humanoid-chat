@@ -136,6 +136,9 @@
 | `force_mute_default_seconds` | `600` | 【强制禁言】默认时长（秒）：force_mute 命令不写时长时使用的默认禁言秒数。 |
 | `force_mute_max_seconds` | `86400` | 【强制禁言】最大时长（秒）：force_mute 命令允许的最长禁言秒数，超出会被截断。 |
 | `force_mute_allow_admins` | `False` | 【强制禁言】允许禁言管理员：仅当机器人自己是群主时生效；默认不允许对管理员执行强制禁言。 |
+| `auto_mute_insult_enabled` | `True` | 【硬规则】有人直接辱骂群主、管理员或 KONA 时自动禁言辱骂者 |
+| `auto_mute_insult_seconds` | `300` | 【硬规则】自动禁言时长（秒），受最大强制禁言时长限制 |
+| `auto_mute_insult_cooldown_seconds` | `60` | 【硬规则】同一用户两次自动禁言的最小间隔 |
 
 ### 作息
 
@@ -215,7 +218,7 @@
 | `bangumi_enabled` | `True` | 【Bangumi】启用动漫搜索、条目详情、角色和每日放送工具。 |
 | `bangumi_access_token` | 空 | 【Bangumi】Access Token；留空仍可匿名查询公开条目，NSFW/部分受限内容不可用。 |
 | `bangumi_base_url` | `https://api.bgm.tv` | 【Bangumi】API 地址。 |
-| `bangumi_user_agent` | `humanoid_chat/3.9.26 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
+| `bangumi_user_agent` | `humanoid_chat/3.9.27 ...` | 【Bangumi】请求 User-Agent；Bangumi 要求带可识别 UA。 |
 | `bangumi_timeout_seconds` | `12` | 【Bangumi】单次请求超时（秒）。 |
 | `bangumi_search_limit` | `5` | 【Bangumi】搜索结果数。 |
 | `bangumi_character_limit` | `10` | 【Bangumi】角色结果数。 |

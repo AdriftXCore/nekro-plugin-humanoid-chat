@@ -4,7 +4,7 @@
 
 > 插件文件：`humanoid_chat.py`
 >
-> 当前版本：`3.9.26`
+> 当前版本：`3.9.27`
 >
 > 适用：Nekro Agent `2.4.x+`
 >
@@ -447,6 +447,8 @@ Nekro Agent 自带：
 - 仅 OneBot 群聊
 - 不能禁言自己、群主
 - 默认不能禁言管理员；只有机器人自己是群主且 `force_mute_allow_admins=true` 才允许
+- 硬规则：有人直接辱骂群主、管理员或 KONA 时，自动禁言辱骂者，默认 300 秒
+- 硬规则只认明确侮辱词，不会因为 `笨蛋`、`蠢货`、`杂鱼` 这类玩梗禁言
 - 不依赖「群管助手」，直接调用 OneBot `set_group_ban`
 - 因此不受群管插件的 `ALLOW_GROUPS` / `PROTECTED_USERS` / `ENABLE_MUTE` 限制
 

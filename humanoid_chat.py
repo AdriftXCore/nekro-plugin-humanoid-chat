@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.26",
+    version="3.9.27",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -682,6 +682,23 @@ class HumanoidConfig(ConfigBase):
         default=False,
         title="【强制禁言】允许禁言管理员",
         description="仅当机器人自己是群主时生效；默认不允许对管理员执行强制禁言。",
+    )
+    auto_mute_insult_enabled: bool = Field(
+        default=True,
+        title="【硬规则】辱骂群主/KONA自动禁言",
+        description="有人直接辱骂群主、管理员或 KONA 时，按硬规则禁言辱骂者；只处理普通成员。",
+    )
+    auto_mute_insult_seconds: int = Field(
+        default=300,
+        ge=1,
+        title="【硬规则】自动禁言时长（秒）",
+        description="硬规则命中后的禁言秒数，最终受强制禁言最大时长限制。",
+    )
+    auto_mute_insult_cooldown_seconds: int = Field(
+        default=60,
+        ge=0,
+        title="【硬规则】自动禁言冷却（秒）",
+        description="同一用户两次硬规则禁言之间的最小间隔。",
     )
 
     # --- 作息与疲劳 ---
@@ -2109,6 +2126,7 @@ _ORIGINAL_AT_CACHE: Dict[str, Tuple[float, List[Tuple[str, str]]]] = {}
 _ORIGINAL_AT_TTL_SECONDS = 60
 _GROUP_PROFILE_CACHE: Dict[str, Tuple[float, GroupProfile]] = {}
 _BOT_ROLE_CACHE: Dict[str, Tuple[float, str]] = {}
+_HARD_MUTE_COOLDOWN: Dict[str, float] = {}
 
 MOOD_WORDS_POSITIVE = (
     "谢谢", "喜欢", "可爱", "厉害", "好棒", "辛苦", "哈哈", "爱你", "牛", "赞", "开心", "有意思",
@@ -4803,6 +4821,134 @@ async def _restore_original_at(ctx: AgentCtx, chat_message: Any, chat_key: str) 
     _log("debug", f"补回原始 AT: {chat_key} msg={message_id} targets={[item[0] for item in added]}")
 
 
+HARD_MUTE_INSULT_RE = re.compile(
+    r"(人工智障|智障|弱智|脑残|傻逼|傻b|煞笔|sb机器人|垃圾ai|废物机器人|"
+    r"cnm|nmsl|去死|操你|草泥马)",
+    re.IGNORECASE,
+)
+HARD_MUTE_SB_RE = re.compile(r"(?<![a-z])sb(?![a-z])", re.IGNORECASE)
+
+
+def _message_at_targets(chat_message: Any) -> Set[str]:
+    targets: Set[str] = set()
+    for segment in getattr(chat_message, "content_data", None) or []:
+        if str(getattr(segment, "type", "")) != "at":
+            continue
+        target = str(getattr(segment, "target_platform_userid", "") or "").strip()
+        if target:
+            targets.add(target)
+    content_text = str(getattr(chat_message, "content_text", "") or "")
+    targets.update(re.findall(r"\[@id:(\d+)", content_text))
+    return targets
+
+
+def _hard_mute_text_hit(text: str) -> bool:
+    normalized = re.sub(r"\s+", "", str(text or "").lower())
+    return bool(HARD_MUTE_INSULT_RE.search(normalized) or HARD_MUTE_SB_RE.search(normalized))
+
+
+async def _try_hard_mute_insult(
+    _ctx: AgentCtx,
+    chat_message: Any,
+    chat_key: str,
+    is_tome: bool,
+    content_text: str,
+    bot_names: Set[str],
+    bot_called: bool,
+) -> bool:
+    if not config.auto_mute_insult_enabled or "group" not in chat_key:
+        return False
+    if not _hard_mute_text_hit(content_text):
+        return False
+
+    sender_id = str(
+        getattr(chat_message, "platform_userid", "")
+        or getattr(chat_message, "sender_id", "")
+        or ""
+    ).strip()
+    if not sender_id or sender_id == "-1":
+        return False
+
+    bot_role = await _detect_bot_role(_ctx, chat_key)
+    if bot_role not in ("owner", "admin"):
+        return False
+
+    at_targets = _message_at_targets(chat_message)
+    content_lower = content_text.lower()
+    try:
+        bot = await _ctx.get_onebot_v11_bot()
+        self_id = str(getattr(bot, "self_id", "") or "").strip()
+        group_id = int(str(_ctx.channel_id or "").replace("group_", "", 1))
+    except Exception as exc:
+        _log("debug", f"硬规则禁言获取 bot 失败: {chat_key}: {type(exc).__name__}: {exc}")
+        return False
+
+    targets_bot = bool(is_tome or bot_called or (self_id and self_id in at_targets))
+    if bot_role == "owner" and "群主" in content_lower:
+        targets_bot = True
+
+    profile = _load_group_profile(chat_key)
+    owner = profile.owner if profile else None
+    targets_owner = False
+    if owner:
+        owner_names = [owner.name, owner.qq, *owner.aliases]
+        targets_owner = bool(
+            (owner.qq and owner.qq in at_targets)
+            or ("群主" in content_lower)
+            or any(
+                len(name.strip()) >= 2 and name.strip().lower() in content_lower
+                for name in owner_names
+                if name
+            )
+        )
+    if not targets_bot and not targets_owner:
+        return False
+
+    cooldown_key = f"{chat_key}:{sender_id}"
+    now = _now()
+    cooldown = max(0, int(config.auto_mute_insult_cooldown_seconds))
+    if cooldown > 0 and now - _HARD_MUTE_COOLDOWN.get(cooldown_key, 0.0) < cooldown:
+        _log("debug", f"硬规则禁言冷却中: {cooldown_key}")
+        return False
+
+    if sender_id == self_id:
+        return False
+    try:
+        sender_info = await bot.get_group_member_info(
+            group_id=group_id,
+            user_id=int(sender_id),
+            no_cache=False,
+        )
+        sender_role = str(sender_info.get("role") or "member")
+    except Exception as exc:
+        _log("warning", f"硬规则禁言查询成员失败: {chat_key} target={sender_id}: {type(exc).__name__}: {exc}")
+        return False
+
+    if sender_role == "owner":
+        return False
+    if sender_role == "admin" and not (bot_role == "owner" and config.force_mute_allow_admins):
+        _log("info", f"硬规则禁言跳过管理员: {chat_key} target={sender_id} bot_role={bot_role}")
+        return False
+
+    duration = min(
+        max(1, int(config.auto_mute_insult_seconds)),
+        max(1, int(config.force_mute_max_seconds)),
+    )
+    try:
+        await bot.set_group_ban(group_id=group_id, user_id=int(sender_id), duration=duration)
+    except Exception as exc:
+        _log("warning", f"硬规则禁言失败: {chat_key} target={sender_id}: {type(exc).__name__}: {exc}")
+        return False
+
+    _HARD_MUTE_COOLDOWN[cooldown_key] = now
+    _log(
+        "info",
+        f"硬规则禁言: chat={chat_key} target={sender_id} duration={duration} "
+        f"target_bot={targets_bot} target_owner={targets_owner}",
+    )
+    return True
+
+
 @plugin.mount_on_user_message()
 async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSignal:
     """处理引用图片硬拦截与夜间免打扰。"""
@@ -4839,14 +4985,24 @@ async def _humanoid_on_user_message(_ctx: AgentCtx, chat_message: Any) -> MsgSig
                 return MsgSignal.BLOCK_TRIGGER
             _log("debug", f"戳一戳处理: action=none user={user_id}")
             return MsgSignal.BLOCK_TRIGGER
-        if chat_key and is_tome and config.low_resource_ignore_enabled:
-            low_state = await _load_chat_state(chat_key)
-            if await _should_block_low_resource(chat_message, chat_key, low_state):
-                return MsgSignal.BLOCK_TRIGGER
         bot_names = await _get_bot_names_for_chat(chat_key, _ctx) if chat_key else set()
         bot_names |= set(_split_csv(config.extra_bot_names))
         content_lower = content_text.lower()
         bot_called = any(name and name.lower() in content_lower for name in bot_names)
+        if chat_key and await _try_hard_mute_insult(
+            _ctx,
+            chat_message,
+            chat_key,
+            is_tome,
+            content_text,
+            bot_names,
+            bot_called,
+        ):
+            return MsgSignal.BLOCK_TRIGGER
+        if chat_key and is_tome and config.low_resource_ignore_enabled:
+            low_state = await _load_chat_state(chat_key)
+            if await _should_block_low_resource(chat_message, chat_key, low_state):
+                return MsgSignal.BLOCK_TRIGGER
         if chat_key and config.red_packet_enabled:
             red_packet = _red_packet_info(chat_message)
             if red_packet:
