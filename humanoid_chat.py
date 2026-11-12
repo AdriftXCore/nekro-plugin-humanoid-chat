@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.32",
+    version="3.9.33",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -281,7 +281,7 @@ class HumanoidConfig(ConfigBase):
         ge=0.0,
         le=1.0,
         title="【瑕疵】错字后更正概率",
-        description="偶发先发一个错字版本，再补一句更正。概率建议很低。",
+        description="偶发先发一个打多字/输入法选错词的版本，再补一句更正。概率建议很低。",
     )
     correction_prefix: str = Field(
         default="啊打错了，",
@@ -5299,19 +5299,57 @@ def _strip_punctuation(text: str) -> str:
     return result.strip()
 
 
+TYPO_WORD_MAP = (
+    ("你好", "你会"),
+    ("你好", "拟好"),
+    ("真的", "真得"),
+    ("可以", "可已"),
+    ("知道", "只道"),
+    ("现在", "现再"),
+    ("因为", "因位"),
+    ("事情", "事晴"),
+    ("喜欢", "喜换"),
+    ("开心", "开新"),
+    ("这样", "这杨"),
+    ("什么", "什吗"),
+    ("怎么", "怎吗"),
+    ("时候", "时后"),
+    ("觉得", "觉的"),
+    ("不是", "不事"),
+    ("一起", "一其"),
+    ("出来", "出莱"),
+    ("已经", "以经"),
+)
+
+
 def _make_typo(text: str) -> Optional[str]:
-    chars = list(text)
-    candidates = [
-        i
-        for i in range(1, len(chars) - 1)
-        if re.match(r"[\u4e00-\u9fa5]", chars[i]) and re.match(r"[\u4e00-\u9fa5]", chars[i + 1])
-    ]
-    if not candidates:
+    if not text:
         return None
-    index = random.choice(candidates)
-    chars[index], chars[index + 1] = chars[index + 1], chars[index]
-    typo = "".join(chars)
-    return typo if typo != text else None
+
+    if random.random() < 0.6:
+        positions = [idx for idx, char in enumerate(text) if re.match(r"[\u4e00-\u9fa5]", char)]
+        if positions:
+            index = random.choice(positions)
+            typo = text[: index + 1] + text[index] + text[index + 1 :]
+            if typo != text:
+                return typo
+
+    matches = []
+    for old, new in TYPO_WORD_MAP:
+        start = 0
+        while True:
+            found = text.find(old, start)
+            if found < 0:
+                break
+            matches.append((found, old, new))
+            start = found + len(old)
+    if matches:
+        start, old, new = random.choice(matches)
+        typo = text[:start] + new + text[start + len(old) :]
+        if typo != text:
+            return typo
+
+    return None
 
 
 def _split_text(text: str) -> List[str]:
