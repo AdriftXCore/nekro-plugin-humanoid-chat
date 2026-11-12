@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.30",
+    version="3.9.31",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -844,28 +844,28 @@ class HumanoidConfig(ConfigBase):
     )
     sticker_emotion_hint: bool = Field(
         default=True,
-        title="【表情】情绪明显时提示 AI 可发表情",
-        description="满足情绪阈值、冷却和概率时，在提示词里建议 AI 自行决定是否发 1 张表情；不会自动发送。",
+        title="【表情】每次说话前随机抽签发表情",
+        description="每次回复前独立随机判定；成功后要求 AI 优先检索并发送 1 张表情，不会静默自动发送。",
     )
     sticker_mood_threshold: int = Field(
         default=20,
         ge=0,
         le=100,
-        title="【表情】情绪提示阈值",
-        description="心情偏离基线达到该值时才考虑提示发表情。",
+        title="【表情】情绪阈值（保留兼容）",
+        description="当前随机抽签逻辑不再使用；保留字段用于兼容旧配置。",
     )
     sticker_hint_probability: float = Field(
-        default=0.35,
+        default=0.40,
         ge=0.0,
         le=1.0,
-        title="【表情】情绪提示概率",
-        description="满足情绪与冷却条件时，每次回复注入表情建议的概率。",
+        title="【表情】表情抽签概率",
+        description="每次说话前独立随机判定；成功时要求优先检索并发送 1 张表情包。",
     )
     sticker_cooldown_minutes: int = Field(
-        default=10,
+        default=5,
         ge=0,
         title="【表情】表情冷却（分钟）",
-        description="距离上次提示或发送图片不足该时间时，不再提示表情。普通文件不计入冷却。",
+        description="距离上次表情提示或发送图片不足该时间时，不再抽签。普通文件不计入冷却。",
     )
 
     draw_refuse_enabled: bool = Field(
@@ -6854,24 +6854,15 @@ send_msg_text(_ck, "内容")
                     _LAST_STICKER_HINT.get(chat_key, 0.0),
                 )
                 cooldown_ok = now_ts - last_sticker >= cfg.sticker_cooldown_minutes * 60
-                mood_delta = valence - cfg.mood_baseline
                 if cooldown_ok and random.random() < cfg.sticker_hint_probability:
                     _LAST_STICKER_HINT[chat_key] = now_ts
-                    if abs(mood_delta) >= cfg.sticker_mood_threshold:
-                        mood_word = mood_label or ("偏开心/兴奋" if mood_delta > 0 else "偏低落/烦躁")
-                        lines.append(
-                            f"· 你现在心情{mood_word}（{valence}/100）。如果合适，可以发 1 张表情包表达："
-                            "先调用 `xemo_get_best_emotion_path(\"完整场景\")` 取路径，再用 `send_msg_file(_ck, 路径)` 发出；"
-                            "只发 1 张，不要连续发，不合适就不发。"
-                        )
-                        _log("info", f"表情提示触发(强): mood={valence} delta={mood_delta} chat={chat_key}")
-                    else:
-                        lines.append(
-                            "· 如果你这条回复有明确情绪（开心/无语/烦躁/低落等），可以自己决定发 1 张表情包："
-                            "先调用 `xemo_get_best_emotion_path(\"完整场景\")` 取路径，再用 `send_msg_file(_ck, 路径)` 发出；"
-                            "没有情绪或觉得不合适就不发，不要连续发。"
-                        )
-                        _log("info", f"表情提示触发(弱): mood={valence} delta={mood_delta} chat={chat_key}")
+                    lines.append(
+                        "· 本轮表情抽签成功：请优先调用「表情管理」插件的 "
+                        "`xemo_get_best_emotion_path(\"当前场景+情绪+对象\")` 检索 1 张合适表情，"
+                        "再用 `send_msg_file(_ck, 路径)` 发出；只发 1 张，不要连续刷图。"
+                        "只有检索不到合适表情，或当前场景明显不适合发图时，才只发文字。"
+                    )
+                    _log("info", f"表情抽签成功: chat={chat_key} mood={valence}")
         lines.append("======【画图：拒绝与主动】======")
         draw_user_label = "超级管理员" if draw_is_super else ("普通用户" if draw_user_id else "未知/系统")
         lines.append(f"· 当前触发者：{draw_user_label}。")

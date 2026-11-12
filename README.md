@@ -4,7 +4,7 @@
 
 > 插件文件：`humanoid_chat.py`
 >
-> 当前版本：`3.9.30`
+> 当前版本：`3.9.31`
 >
 > 适用：Nekro Agent `2.4.x+`
 >
@@ -70,7 +70,7 @@
   - 夜间默认不主动打扰
 - **表情 / 多模态协作**
   - 不接管表情库，调用「表情管理」插件的 `xemo_get_best_emotion_path`
-  - 情绪明显时提示 AI 自行决定是否发 1 张表情
+  - 每次说话前随机抽签，成功时提示 AI 优先检索并发送 1 张表情
 - **画图概率拒绝 / 主动画图**
   - 普通用户请求画图时按 `draw_refuse_probability` 概率拒绝，超级管理员默认豁免
   - 拒绝时不调用「绘图」/「多图绘制」，用符合人设的短句拒绝或转移话题
@@ -719,7 +719,7 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `favorability_proactive_window_minutes` | 主动冒泡统计的最近活跃窗口，默认 15 分钟 |
 | `favorability_proactive_strength` | 好感度 100 时的最大冒泡加成，默认 0.15 |
 | `enable_sticker_coordination` | 是否与表情管理协作 |
-| `sticker_emotion_hint` | 情绪明显时是否提示发表情 |
+| `sticker_emotion_hint` | 每次说话前是否随机抽签提示发表情 |
 | `draw_refuse_enabled` | 是否启用画图概率拒绝 |
 | `draw_refuse_probability` | 普通用户请求画图的拒绝概率，默认 0.8 |
 | `human_search_enabled` | 是否启用 `human_search` |

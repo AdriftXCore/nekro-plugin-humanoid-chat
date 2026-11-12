@@ -177,10 +177,10 @@
 | `enable_sticker_coordination` | `True` | 【表情】与表情管理插件协作：提示 AI 用 emotions 插件的 xemo_get_best_emotion_path 取图，本插件只负责发送时机。 |
 | `media_delay_min` | `0.3` | 【表情】发图前延迟下限（秒）：模拟挑选/加载图片的时间。 |
 | `media_delay_max` | `1.2` | 【表情】发图前延迟上限（秒）：模拟挑选/加载图片的时间。 |
-| `sticker_emotion_hint` | `True` | 【表情】情绪明显时提示 AI 可发表情：满足情绪阈值、冷却和概率时，在提示词里建议 AI 自行决定是否发 1 张表情；不会自动发送。 |
-| `sticker_mood_threshold` | `20` | 【表情】情绪提示阈值：心情偏离基线达到该值时才考虑提示发表情。 |
-| `sticker_hint_probability` | `0.35` | 【表情】情绪提示概率：满足情绪与冷却条件时，每次回复注入表情建议的概率。 |
-| `sticker_cooldown_minutes` | `10` | 【表情】表情冷却（分钟）：距离上次提示或发送图片不足该时间时，不再提示表情。普通文件不计入冷却。 |
+| `sticker_emotion_hint` | `True` | 【表情】表情抽签提示：每次说话前随机判定，成功后要求优先检索并发送 1 张表情。 |
+| `sticker_mood_threshold` | `20` | 【表情】保留兼容，当前随机抽签不再使用该阈值。 |
+| `sticker_hint_probability` | `0.40` | 【表情】表情抽签概率：每次说话前独立随机判定，默认 40%。 |
+| `sticker_cooldown_minutes` | `5` | 【表情】表情冷却（分钟）：冷却期间不参与抽签。 |
 
 ### 画图
 
