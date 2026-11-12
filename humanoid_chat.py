@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.28",
+    version="3.9.30",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -480,14 +480,21 @@ class HumanoidConfig(ConfigBase):
     favorability_reply_enabled: bool = Field(
         default=True,
         title="【关系】好感度影响响应",
-        description="读取「好感度系统」的分数，小幅影响叫名字和低状态拒回概率。",
+        description="读取「好感度系统」的分数，小幅影响群聊普通接话、叫名字和低状态拒回概率。",
     )
     favorability_reply_strength: float = Field(
         default=0.10,
         ge=0.0,
         le=0.50,
         title="【关系】好感度响应权重",
-        description="好感度 0~100 时，响应概率最多提升的比例；默认 0.10 即最多 +10%。",
+        description="叫名字等非普通接话场景的乘法权重；默认 0.10 即最多 +10%。",
+    )
+    favorability_reply_bonus_max: float = Field(
+        default=0.05,
+        ge=0.0,
+        le=0.50,
+        title="【关系】普通接话好感加成上限",
+        description="普通群聊接话的加法加成；好感度 100 时增加该值，默认 +5 个百分点。",
     )
     favorability_reply_cache_seconds: int = Field(
         default=30,
@@ -497,9 +504,9 @@ class HumanoidConfig(ConfigBase):
         description="缓存读取到的好感度分数，避免每条消息查询数据库。",
     )
     favorability_proactive_enabled: bool = Field(
-        default=True,
+        default=False,
         title="【关系】好感度影响群主动冒泡",
-        description="只对群聊生效；最近活跃用户中好感度最高的人会给主动冒泡概率加成。",
+        description="默认关闭；主动冒泡容易打扰群聊，当前只按群员发言影响接话率。",
     )
     favorability_proactive_window_minutes: int = Field(
         default=15,
@@ -774,11 +781,11 @@ class HumanoidConfig(ConfigBase):
         description="私聊后台每轮检查时的基础冒泡概率；群聊使用 group_active_chat_probability。",
     )
     group_active_chat_probability: float = Field(
-        default=0.03,
+        default=0.0,
         ge=0.0,
         le=1.0,
         title="【主动】群聊每轮冒泡概率",
-        description="群聊后台每轮检查时的基础冒泡概率；建议 0.02~0.08。",
+        description="默认关闭；设置为 0 可避免没聊天的群也被主动冒泡。",
     )
     proactive_min_interval_minutes: int = Field(
         default=45,
@@ -2746,6 +2753,13 @@ def _favorability_reply_factor(score: float) -> float:
     return _clamp(1.0 + normalized * config.favorability_reply_strength, 1.0, 1.5)
 
 
+def _favorability_reply_bonus(score: float) -> float:
+    if not config.favorability_reply_enabled:
+        return 0.0
+    normalized = _clamp(float(score), 0.0, 100.0) / 100.0
+    return normalized * config.favorability_reply_bonus_max
+
+
 def _favorability_block_factor(score: float) -> float:
     if not config.favorability_reply_enabled:
         return 1.0
@@ -4170,6 +4184,14 @@ async def humanoid_stats_cmd(context: CommandExecutionContext) -> CommandRespons
     )
     if name_chance is not None:
         lines.append(f"叫名字触发：{name_chance * 100:.1f}%")
+        ordinary = _clamp(
+            config.reply_probability
+            + _favorability_reply_bonus(favorability_score),
+            0.0,
+            1.0,
+        )
+        ordinary *= _night_factor_reply() * _energy_reply_factor(state) * _patience_reply_factor(state)
+        lines.append(f"普通群聊接话：{_clamp(ordinary, 0.0, 1.0) * 100:.1f}%")
     if is_group and config.favorability_proactive_enabled:
         anchor_id, anchor_name, anchor_score = await _get_recent_favorability_anchor(chat_key)
         if anchor_id:
@@ -4714,10 +4736,15 @@ if NONEBOT_AVAILABLE:
 
             favorability_score = 0.0
             favorability_factor = 1.0
-            if name_called:
+            favorability_bonus = 0.0
+            if group_id:
                 favorability_score = await _get_favorability_score(chat_key, str(user_id))
-                favorability_factor = _favorability_reply_factor(favorability_score)
-                target_prob *= favorability_factor
+                if name_called:
+                    favorability_factor = _favorability_reply_factor(favorability_score)
+                    target_prob *= favorability_factor
+                elif reason == "普通闲聊":
+                    favorability_bonus = _favorability_reply_bonus(favorability_score)
+                    target_prob += favorability_bonus
 
             target_prob *= _night_factor_reply()
             target_prob *= _energy_reply_factor(state)
@@ -4733,7 +4760,8 @@ if NONEBOT_AVAILABLE:
                 "debug",
                 f"漏斗: msg='{raw_msg[:40]}' 名字={list(all_names)} 类型={reason} "
                 f"阈值={target_prob:.3f} 骰子={dice:.3f} 命中={hit} "
-                f"fav={favorability_score:.0f} fav_factor={favorability_factor:.3f}",
+                f"fav={favorability_score:.0f} fav_factor={favorability_factor:.3f} "
+                f"fav_bonus={favorability_bonus:.3f}",
             )
             if hit:
                 asyncio.create_task(

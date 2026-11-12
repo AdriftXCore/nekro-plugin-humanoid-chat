@@ -95,9 +95,10 @@
 | `familiarity_gain` | `1.2` | 【关系】每条消息熟悉度增量：正常互动时的熟悉度增长；连续轰炸会打折。 |
 | `familiarity_max` | `100` | 【关系】熟悉度上限：熟悉度封顶值。 |
 | `favorability_reply_enabled` | `True` | 【关系】好感度影响响应：读取「好感度系统」分数，小幅影响叫名字和低状态拒回概率。 |
-| `favorability_reply_strength` | `0.10` | 【关系】好感度响应权重：好感度 0~100 时响应概率最多提升 10%。 |
+| `favorability_reply_strength` | `0.10` | 【关系】叫名字场景的乘法响应权重：好感度 0~100 时最多提升 10%。 |
+| `favorability_reply_bonus_max` | `0.05` | 【关系】普通群聊接话的加法加成：好感度 100 时增加 5 个百分点；0 分不加。 |
 | `favorability_reply_cache_seconds` | `30` | 【关系】好感度缓存秒数：缓存分数，避免每条消息查库。 |
-| `favorability_proactive_enabled` | `True` | 【关系】好感度影响群主动冒泡：最近活跃用户中最高好感给群冒泡加成。 |
+| `favorability_proactive_enabled` | `False` | 【关系】好感度影响群主动冒泡：默认关闭；当前改为群员发言时影响接话率。 |
 | `favorability_proactive_window_minutes` | `15` | 【关系】主动冒泡好感活跃窗口：只统计最近多少分钟发言过的用户。 |
 | `favorability_proactive_strength` | `0.15` | 【关系】主动冒泡好感权重：好感度 100 时最多提升 15%。 |
 | `memory_limit` | `8` | 【关系】每用户小事记忆条数：AI 通过 humanoid_remember 记录的小事最多保留多少条。 |
@@ -161,7 +162,7 @@
 |---|---|---|
 | `proactive_enabled` | `True` | 【主动】启用后台生活循环：定期评估是否主动冒泡；不是每次都发，会结合活跃度与精力。 |
 | `active_chat_probability` | `0.0` | 【主动】私聊每轮冒泡概率：私聊后台每轮检查时的基础概率。 |
-| `group_active_chat_probability` | `0.03` | 【主动】群聊每轮冒泡概率：群聊后台每轮检查时的基础概率；建议 0.02~0.08。 |
+| `group_active_chat_probability` | `0.0` | 【主动】群聊每轮冒泡概率：默认关闭，避免没聊天的群也被主动冒泡。 |
 | `proactive_min_interval_minutes` | `45` | 【主动】两次冒泡最小间隔（分钟）：避免刚冒泡完又冒泡。 |
 | `proactive_max_per_day` | `4` | 【主动】每日最多冒泡次数：0 表示不限制。 |
 | `proactive_min_group_idle_minutes` | `10` | 【主动】群聊最少安静时长（分钟）：群刚聊得火热时不主动插话。 |
