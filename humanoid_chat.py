@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.33",
+    version="3.9.34",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -7022,6 +7022,14 @@ send_msg_text(_ck, "内容")
             )
             lines.append(
                 "· 用户问今天/周几有什么新番时，用 `human_bangumi_calendar(weekday)` 查每日放送。"
+            )
+            lines.append(
+                "· 用户问「你在看什么」「最近追什么番」「最近有什么新番」这类番剧/动漫话题时，"
+                "先调用 `human_bangumi_calendar()` 查看今天或近期的新番，再挑 1 部符合当前人设的作品，"
+                "用自己正在追或刚看过的口吻简短回答；不要列清单、不要复述播出表。"
+            )
+            lines.append(
+                "· 如果日历没有合适作品、查询失败或信息明显滞后，就自然说最近没特别在追，不要编造。"
             )
             lines.append(
                 "· 每轮最多 1 次搜索；查不到就明确说没查到，不要连续重试或编造。"

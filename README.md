@@ -4,7 +4,7 @@
 
 > 插件文件：`humanoid_chat.py`
 >
-> 当前版本：`3.9.33`
+> 当前版本：`3.9.34`
 >
 > 适用：Nekro Agent `2.4.x+`
 >
@@ -89,7 +89,7 @@
 - **Bangumi 动漫资料**
   - 提供 `human_bangumi_search`、`human_bangumi_subject`、`human_bangumi_characters`、`human_bangumi_calendar`
   - 查询动画条目、评分、简介、角色/声优和每日放送
-  - 遇到具体动漫事实且 AI 不确定时主动查 Bangumi；普通闲聊/玩梗不查
+  - 遇到具体动漫事实且 AI 不确定时主动查 Bangumi；问“你在看什么/最近追什么番”时先查每日放送
   - Token 可选，默认匿名查询公开条目；Token 只放插件配置，不写入仓库
 - **红包识别与推脱**
   - 识别群里的红包卡片，记录标题和是否点名机器人
