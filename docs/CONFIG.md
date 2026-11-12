@@ -181,6 +181,7 @@
 | `sticker_mood_threshold` | `20` | 【表情】保留兼容，当前随机抽签不再使用该阈值。 |
 | `sticker_hint_probability` | `0.40` | 【表情】表情抽签概率：每次说话前独立随机判定，默认 40%。 |
 | `sticker_cooldown_minutes` | `5` | 【表情】表情冷却（分钟）：冷却期间不参与抽签。 |
+| `sticker_auto_collect_enabled` | `True` | 【表情】允许主动收藏表情：群友发来可见且适合做表情包的图片时，可调用 `xemo_collect_emotion`；截图、照片、隐私图不收藏。 |
 
 ### 画图
 

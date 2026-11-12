@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.31",
+    version="3.9.32",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -846,6 +846,11 @@ class HumanoidConfig(ConfigBase):
         default=True,
         title="【表情】每次说话前随机抽签发表情",
         description="每次回复前独立随机判定；成功后要求 AI 优先检索并发送 1 张表情，不会静默自动发送。",
+    )
+    sticker_auto_collect_enabled: bool = Field(
+        default=True,
+        title="【表情】允许主动收藏表情",
+        description="允许 AI 在群友发来明显适合做表情包的可见图片时，主动调用 xemo_collect_emotion 收藏。",
     )
     sticker_mood_threshold: int = Field(
         default=20,
@@ -6844,9 +6849,17 @@ send_msg_text(_ck, "内容")
         if cfg.enable_sticker_coordination:
             lines.append(
                 "· 想发表情包/图片时，调用「表情管理」插件的 `xemo_get_best_emotion_path(query)` 取路径，"
-                "再用 `send_msg_file(_ck, 路径)` 发出；不要自己维护表情 ID、不要调用图库管理/收藏相关操作，"
-                "也不要在文字里暴露 ID 或文件名。"
+                "再用 `send_msg_file(_ck, 路径)` 发出；不要自己维护表情 ID，也不要在文字里暴露 ID 或文件名。"
             )
+            if cfg.sticker_auto_collect_enabled:
+                lines.append(
+                    "· 当群友发来明显是表情包/梗图、且你在当前上下文能确认图片内容时，可以主动调用 "
+                    "`xemo_collect_emotion(source_path, description, tags, vision_and_emotion_confirmed=True, category)` 收藏；"
+                    "只收藏真正的表情包/反应图。截图、自拍、照片、聊天记录、隐私图片、广告图一律不要收藏；"
+                    "不确定图片内容就不要调用，不要猜。收藏后不要向用户展示 ID、标签、向量或内部细节。"
+                )
+            else:
+                lines.append("· 不要主动收藏新表情；只使用图库中已有表情。")
             if cfg.sticker_emotion_hint:
                 now_ts = _now()
                 last_sticker = max(
@@ -6860,7 +6873,8 @@ send_msg_text(_ck, "内容")
                         "· 本轮表情抽签成功：请优先调用「表情管理」插件的 "
                         "`xemo_get_best_emotion_path(\"当前场景+情绪+对象\")` 检索 1 张合适表情，"
                         "再用 `send_msg_file(_ck, 路径)` 发出；只发 1 张，不要连续刷图。"
-                        "只有检索不到合适表情，或当前场景明显不适合发图时，才只发文字。"
+                        "先判断检索结果是否真的贴合当前场景和情绪；不贴合、没有合适表情，或当前场景不适合发图时，"
+                        "就只发文字，不要为了完成任务硬发一张不合适的图。"
                     )
                     _log("info", f"表情抽签成功: chat={chat_key} mood={valence}")
         lines.append("======【画图：拒绝与主动】======")

@@ -4,7 +4,7 @@
 
 > 插件文件：`humanoid_chat.py`
 >
-> 当前版本：`3.9.31`
+> 当前版本：`3.9.32`
 >
 > 适用：Nekro Agent `2.4.x+`
 >
@@ -720,6 +720,7 @@ Nekro 自带长期记忆按 **workspace** 隔离。启用方式：
 | `favorability_proactive_strength` | 好感度 100 时的最大冒泡加成，默认 0.15 |
 | `enable_sticker_coordination` | 是否与表情管理协作 |
 | `sticker_emotion_hint` | 每次说话前是否随机抽签提示发表情 |
+| `sticker_auto_collect_enabled` | 是否允许 AI 主动收藏合适的新表情 |
 | `draw_refuse_enabled` | 是否启用画图概率拒绝 |
 | `draw_refuse_probability` | 普通用户请求画图的拒绝概率，默认 0.8 |
 | `human_search_enabled` | 是否启用 `human_search` |
