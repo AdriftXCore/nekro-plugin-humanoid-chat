@@ -257,6 +257,14 @@
 | `qzone_daily_catchup_minutes` | `30` | 【QQ空间】到点后机器人离线，恢复后最多补发多少分钟；`0` 表示不补发。 |
 | `qzone_daily_max_chars` | `150` | 【QQ空间】AI 生成的每日说说最大字符数，超出则跳过。 |
 | `qzone_daily_themes` | `最近生活,兴趣,心情,游戏,动漫,吃的` | 【QQ空间】逗号分隔的主题池，每次随机选一个给 AI 参考。 |
+| `qzone_weather_enabled` | `True` | 【QQ空间】每日说说参考天气；使用免费的 `wttr.in`，查询失败自动跳过。 |
+| `qzone_weather_city` | `武汉` | 【QQ空间】天气城市；留空或关闭天气时不查询。 |
+| `qzone_context_enabled` | `True` | 【QQ空间】每日说说参考所有有群档案的群的近期氛围摘要，不写昵称、群号或原话。 |
+| `qzone_context_max_age_minutes` | `1440` | 【QQ空间】群氛围摘要有效期；超过该时间不再用于说说，`0` 表示不限制。 |
+| `qzone_auto_sticker_enabled` | `True` | 【QQ空间】每日说说自动尝试从表情管理插件挑 1 张合适表情；没有合适结果就纯文字。 |
+| `qzone_daily_include_bangumi` | `True` | 【QQ空间】每日说说参考 Bangumi 今日放送，作为可选素材，不强制每天提番。 |
+| `qzone_recent_posts_limit` | `8` | 【QQ空间】生成新说说时参考最近多少条已发说说，避免重复。 |
+| `qzone_anti_repeat_threshold` | `0.8` | 【QQ空间】新说说与最近说说的相似度阈值，超过时重写一次；`0` 表示不检查。 |
 
 ### 回复方式
 

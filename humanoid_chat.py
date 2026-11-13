@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import difflib
 import json
 import random
 import re
@@ -76,7 +77,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.36",
+    version="3.10.1",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -1172,6 +1173,52 @@ class HumanoidConfig(ConfigBase):
         default="最近生活,兴趣,心情,游戏,动漫,吃的",
         title="【QQ空间】每日说说主题池",
         description="逗号分隔；每次随机选一个作为 AI 生成说说的主题参考。",
+    )
+    qzone_weather_enabled: bool = Field(
+        default=True,
+        title="【QQ空间】每日说说参考天气",
+        description="使用免费的 wttr.in 获取指定城市天气；查询失败时自动跳过，不影响发说说。",
+    )
+    qzone_weather_city: str = Field(
+        default="武汉",
+        title="【QQ空间】天气城市",
+        description="wttr.in 查询的城市名；留空或关闭天气时不查询。",
+    )
+    qzone_context_enabled: bool = Field(
+        default=True,
+        title="【QQ空间】每日说说参考群聊氛围",
+        description="读取所有有群档案的群的近期氛围摘要，作为说说灵感；不会写群友昵称、群号或原话。",
+    )
+    qzone_context_max_age_minutes: int = Field(
+        default=1440,
+        ge=0,
+        le=10080,
+        title="【QQ空间】群聊氛围有效期（分钟）",
+        description="超过该时间的群氛围摘要不再用于说说；0 表示不限制。",
+    )
+    qzone_auto_sticker_enabled: bool = Field(
+        default=True,
+        title="【QQ空间】自动配表情包",
+        description="每日说说生成后尝试从表情管理插件挑 1 张合适的表情；没有合适结果就纯文字。",
+    )
+    qzone_daily_include_bangumi: bool = Field(
+        default=True,
+        title="【QQ空间】每日说说参考今日番剧",
+        description="读取 Bangumi 今日放送，作为可选素材，不强制每天提番。",
+    )
+    qzone_recent_posts_limit: int = Field(
+        default=8,
+        ge=1,
+        le=30,
+        title="【QQ空间】防重复参考条数",
+        description="生成新说说时参考最近多少条已发说说，避免重复。",
+    )
+    qzone_anti_repeat_threshold: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        title="【QQ空间】防重复相似度阈值",
+        description="新说说与最近说说的相似度超过该值时重写一次；0 表示不检查。",
     )
 
     # --- 回复方式 ---
@@ -6227,6 +6274,7 @@ async def _publish_qzone_content(
     images: List[str] | None = None,
     ugc_right: int | None = None,
     source: str = "manual",
+    meta: Optional[Dict[str, Any]] = None,
 ) -> str:
     if not config.qzone_enabled:
         return "QQ空间发布已关闭。"
@@ -6272,6 +6320,19 @@ async def _publish_qzone_content(
     state["count"] = count + 1
     state["last_post"] = now
     state["date"] = today
+    recent_posts = state.get("recent_posts")
+    if not isinstance(recent_posts, list):
+        recent_posts = []
+    entry: Dict[str, Any] = {
+        "ts": now,
+        "date": today,
+        "content": content,
+        "source": source,
+    }
+    if isinstance(meta, dict):
+        entry.update({key: value for key, value in meta.items() if value is not None})
+    recent_posts.append(entry)
+    state["recent_posts"] = recent_posts[-max(1, int(config.qzone_recent_posts_limit)):]
     await _store_set_dict(state, chat_key="qzone", store_key="qzone_state")
     _log("info", f"QQ空间发布成功({source}): count={state['count']} ugc_right={right} images={len(prepared_images)}")
     return "已发布 QQ 空间说说。"
@@ -6333,6 +6394,248 @@ def _qzone_daily_themes() -> List[str]:
     return [item.strip() for item in str(config.qzone_daily_themes or "").split(",") if item.strip()]
 
 
+def _qzone_fetch_weather(city: str) -> str:
+    city = (city or "").strip()
+    if not city:
+        return ""
+    url = f"https://wttr.in/{urllib.parse.quote(city)}?format=j1&lang=zh-cn"
+    request = urllib.request.Request(url, headers={"User-Agent": "humanoid_chat/3.10.0"})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        body = response.read().decode("utf-8", errors="replace")
+    data = json.loads(body)
+    current = (data.get("current_condition") or [{}])[0]
+    today = (data.get("weather") or [{}])[0]
+    desc = ""
+    lang_values = current.get("lang_zh-cn")
+    if isinstance(lang_values, list) and lang_values and isinstance(lang_values[0], dict):
+        desc = str(lang_values[0].get("value") or "").strip()
+    if not desc:
+        desc_values = current.get("weatherDesc")
+        if isinstance(desc_values, list) and desc_values and isinstance(desc_values[0], dict):
+            desc = str(desc_values[0].get("value") or "").strip()
+    parts = [f"{city}{desc}" if desc else city]
+    temp = str(current.get("temp_C") or "").strip()
+    feels = str(current.get("FeelsLikeC") or "").strip()
+    min_temp = str(today.get("mintempC") or "").strip()
+    max_temp = str(today.get("maxtempC") or "").strip()
+    if temp:
+        parts.append(f"{temp}℃")
+    if feels and feels != temp:
+        parts.append(f"体感{feels}℃")
+    if min_temp or max_temp:
+        parts.append(f"{min_temp}~{max_temp}℃")
+    return "，".join(parts)
+
+
+def _clean_qzone_context_text(text: str) -> str:
+    value = str(text or "")
+    value = re.sub(r"\[CQ:[^\]]+\]", "", value)
+    value = re.sub(r"\[@id:\d+[^\]]*@\]", "", value)
+    value = re.sub(r"https?://\S+", "", value)
+    value = re.sub(r"@\d+", "", value)
+    return _clip_text(" ".join(value.split()), 60)
+
+
+async def _qzone_group_context() -> List[str]:
+    if not config.qzone_context_enabled:
+        return []
+    root = _group_profile_root()
+    try:
+        paths = sorted(root.glob("*.yaml"))
+    except Exception:
+        return []
+    max_age_seconds = max(0, int(config.qzone_context_max_age_minutes)) * 60
+    now_ts = _now()
+    items: List[str] = []
+    for path in paths:
+        if ".learned_terms" in path.name or ".bak" in path.name:
+            continue
+        chat_key = path.stem
+        if not chat_key.startswith("onebot_v11-group_"):
+            continue
+        profile = _load_group_profile(chat_key)
+        if not profile or not profile.enabled:
+            continue
+        state = await _load_chat_state(chat_key)
+        summary = str(state.get("atmosphere_summary") or "").strip()
+        updated_ts = max(
+            float(state.get("atmosphere_updated_at") or 0),
+            float(state.get("atmosphere_last_checked_at") or 0),
+        )
+        if max_age_seconds > 0 and updated_ts > 0 and now_ts - updated_ts > max_age_seconds:
+            summary = ""
+        if not summary:
+            snippets: List[str] = []
+            raw_topics = state.get("recent_topics")
+            if isinstance(raw_topics, list):
+                for item in raw_topics[-8:]:
+                    if not isinstance(item, dict):
+                        continue
+                    text = _clean_qzone_context_text(str(item.get("text") or ""))
+                    if text and not text.startswith("[Image:"):
+                        snippets.append(text)
+            summary = " / ".join(snippets[-4:])
+        if not summary:
+            continue
+        group_name = chat_key
+        try:
+            channel = await DBChatChannel.get_or_none(chat_key=chat_key)
+            if channel and channel.channel_name:
+                group_name = str(channel.channel_name)
+        except Exception:
+            pass
+        items.append(f"{group_name}：{_clip_text(summary, 160)}")
+    return items[:8]
+
+
+def _qzone_bangumi_titles(limit: int = 5) -> List[str]:
+    if not config.qzone_daily_include_bangumi or not config.bangumi_enabled:
+        return []
+    try:
+        data = _bangumi_request("/calendar", timeout=int(config.bangumi_timeout_seconds))
+    except BangumiError as exc:
+        _log("debug", f"QQ空间每日任务: Bangumi 日历跳过: {exc}")
+        return []
+    if not isinstance(data, list):
+        return []
+    day = _local_now().isoweekday()
+    titles: List[str] = []
+    for group in data:
+        if not isinstance(group, dict):
+            continue
+        weekday_data = group.get("weekday") if isinstance(group.get("weekday"), dict) else {}
+        if int(weekday_data.get("id") or 0) != day:
+            continue
+        raw_items = group.get("items")
+        if not isinstance(raw_items, list):
+            continue
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            title = _bangumi_subject_title(item)
+            if title and title not in titles:
+                titles.append(title)
+            if len(titles) >= max(1, int(limit)):
+                break
+        break
+    return titles
+
+
+async def _qzone_recent_posts(limit: int) -> List[Dict[str, Any]]:
+    state = await _store_get_dict(chat_key="qzone", store_key="qzone_state")
+    recent = state.get("recent_posts")
+    if not isinstance(recent, list):
+        return []
+    posts = [item for item in recent if isinstance(item, dict) and str(item.get("content") or "").strip()]
+    return posts[-max(1, int(limit)):]
+
+
+def _qzone_content_too_similar(content: str, recent_posts: List[Dict[str, Any]]) -> bool:
+    threshold = float(config.qzone_anti_repeat_threshold)
+    if threshold <= 0:
+        return False
+    normalized = _normalize_for_repeat(content)
+    if not normalized:
+        return True
+    for item in recent_posts:
+        previous = _normalize_for_repeat(str(item.get("content") or ""))
+        if not previous:
+            continue
+        if normalized == previous:
+            return True
+        if difflib.SequenceMatcher(None, normalized, previous).ratio() >= threshold:
+            return True
+    return False
+
+
+def _parse_qzone_daily_output(text: str) -> Tuple[str, str]:
+    raw = (text or "").strip()
+    if not raw:
+        return "", ""
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z0-9_-]*\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw).strip()
+    content = ""
+    image_query = ""
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start >= 0 and end > start:
+        try:
+            data = json.loads(raw[start : end + 1])
+        except Exception:
+            return "", ""
+        if isinstance(data, dict):
+            content = str(data.get("content") or data.get("text") or "").strip()
+            image_query = str(
+                data.get("image_query") or data.get("sticker_query") or data.get("image") or ""
+            ).strip()
+    if not content:
+        content = raw
+    content = _clean_qzone_generated_text(content)
+    content = re.sub(r"https?://\S+", "", content)
+    content = re.sub(r"\[CQ:[^\]]+\]", "", content)
+    content = re.sub(r"@\d+", "", content)
+    content = re.sub(r"\b\d{5,}\b", "", content)
+    content = " ".join(content.split()).strip()
+    if not content:
+        return "", ""
+    if image_query.strip().lower() in {"none", "null", "no", "false", "0", "无", "不配图", "不需要"}:
+        image_query = ""
+    return content, _clip_text(image_query, 120)
+
+
+async def _qzone_pick_sticker(image_query: str) -> str:
+    if not config.qzone_auto_sticker_enabled or not config.qzone_images_enabled:
+        return ""
+    query = str(image_query or "").strip()
+    if not query or int(config.qzone_max_images) <= 0:
+        return ""
+    try:
+        from nekro_agent.services.plugin.collector import plugin_collector
+
+        emotions_plugin = plugin_collector.get_plugin_by_module_name("emotions")
+        if emotions_plugin is None or not emotions_plugin.is_enabled:
+            _log("debug", "QQ空间表情检索跳过: 表情管理插件未启用")
+            return ""
+        method = plugin_collector.get_method("xemo_get_best_emotion_path")
+        if method is None:
+            _log("debug", "QQ空间表情检索跳过: 未找到表情管理插件方法")
+            return ""
+        qzone_ctx = AgentCtx(
+            from_chat_key="qzone",
+            channel_id="qzone",
+            channel_name="QQ空间",
+            channel_type="group",
+            adapter_key="onebot_v11",
+        )
+        path = await method(qzone_ctx, query)
+        path_text = str(path or "").strip()
+        if not path_text:
+            return ""
+        name = Path(path_text).name
+        if not name:
+            return ""
+        try:
+            from nekro_agent.core.os_env import USER_UPLOAD_DIR
+
+            upload_root = Path(USER_UPLOAD_DIR)
+        except Exception:
+            upload_root = Path("/volume1/docker/nekro-agent/uploads")
+        candidates = [
+            upload_root / "qzone" / name,
+            upload_root / name,
+        ]
+        if upload_root.exists():
+            candidates.extend(sorted(upload_root.glob(f"*/{name}")))
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+        return path_text
+    except Exception as exc:
+        _log("info", f"QQ空间表情检索跳过: {type(exc).__name__}: {exc}")
+        return ""
+
+
 def _clean_qzone_generated_text(text: str) -> str:
     value = (text or "").strip()
     if not value:
@@ -6349,7 +6652,11 @@ def _clean_qzone_generated_text(text: str) -> str:
     return value
 
 
-async def _qzone_generate_daily_content() -> str:
+async def _qzone_generate_daily_content(
+    recent_posts: List[Dict[str, Any]],
+    *,
+    force_variation: bool = False,
+) -> Dict[str, Any]:
     try:
         from nekro_agent.core.config import config as core_config
         from nekro_agent.models.db_preset import DBPreset
@@ -6358,7 +6665,7 @@ async def _qzone_generate_daily_content() -> str:
         from nekro_agent.services.preset_service import DEFAULT_PRESET_CONTENT
     except Exception as exc:
         _log("warning", f"QQ空间每日任务: 导入生成依赖失败: {type(exc).__name__}: {exc}")
-        return ""
+        return {}
 
     preset_id = getattr(core_config, "AI_CHAT_DEFAULT_PRESET_ID", None)
     preset = await DBPreset.get_or_none(id=preset_id) if preset_id else None
@@ -6369,25 +6676,112 @@ async def _qzone_generate_daily_content() -> str:
     model_group = core_config.MODEL_GROUPS.get(group_name)
     if model_group is None:
         _log("warning", f"QQ空间每日任务: 模型组 {group_name} 不存在")
-        return ""
+        return {}
     if getattr(model_group, "MODEL_TYPE", "chat") != "chat":
         _log("warning", f"QQ空间每日任务: 模型组 {group_name} 不是聊天模型")
-        return ""
+        return {}
     if not getattr(model_group, "CHAT_MODEL", ""):
         _log("warning", f"QQ空间每日任务: 模型组 {group_name} 未配置 CHAT_MODEL")
-        return ""
+        return {}
 
+    now_local = _local_now()
+    weekday_label = "一二三四五六日"[now_local.isoweekday() - 1]
+    if now_local.hour < 6:
+        period = "凌晨"
+    elif now_local.hour < 11:
+        period = "上午"
+    elif now_local.hour < 14:
+        period = "中午"
+    elif now_local.hour < 18:
+        period = "下午"
+    else:
+        period = "晚上"
+
+    weather_text = ""
+    group_context: List[str] = []
+    bangumi_titles: List[str] = []
     themes = _qzone_daily_themes()
-    theme = random.choice(themes) if themes else "最近的生活"
+    recent_themes = {
+        str(item.get("theme") or "").strip()
+        for item in recent_posts
+        if str(item.get("theme") or "").strip()
+    }
+    available_themes = [item for item in themes if item not in recent_themes] or themes
+    theme = random.choice(available_themes) if available_themes else "最近的生活"
+
+    focus_options = ["life"]
+    if config.qzone_weather_enabled and (config.qzone_weather_city or "").strip():
+        focus_options.append("weather")
+    if config.qzone_context_enabled:
+        focus_options.append("group")
+    if config.qzone_daily_include_bangumi and config.bangumi_enabled:
+        focus_options.append("bangumi")
+    recent_focuses = {str(item.get("focus") or "").strip() for item in recent_posts[-3:]}
+    available_focuses = [item for item in focus_options if item not in recent_focuses] or focus_options
+    focus = random.choice(available_focuses) if available_focuses else "life"
+    focus_line = f"主题参考：{theme}"
+
+    if focus == "weather":
+        try:
+            weather_text = await asyncio.to_thread(_qzone_fetch_weather, config.qzone_weather_city)
+        except Exception as exc:
+            _log("info", f"QQ空间每日任务: 天气查询跳过: {type(exc).__name__}: {exc}")
+        if weather_text:
+            focus_line = f"今天的天气：{weather_text}"
+        else:
+            focus = "life"
+            focus_line = f"主题参考：{theme}"
+    elif focus == "group":
+        try:
+            group_context = await _qzone_group_context()
+        except Exception as exc:
+            _log("warning", f"QQ空间每日任务: 群聊氛围读取失败: {type(exc).__name__}: {exc}")
+        if group_context:
+            focus_line = f"群里最近在聊：{random.choice(group_context)}"
+        else:
+            focus = "life"
+            focus_line = f"主题参考：{theme}"
+    elif focus == "bangumi":
+        try:
+            bangumi_titles = await asyncio.to_thread(_qzone_bangumi_titles, 5)
+        except Exception as exc:
+            _log("info", f"QQ空间每日任务: 番剧素材跳过: {type(exc).__name__}: {exc}")
+        if bangumi_titles:
+            focus_line = f"今天有《{random.choice(bangumi_titles)}》放送"
+        else:
+            focus = "life"
+            focus_line = f"主题参考：{theme}"
+
+    context_lines: List[str] = [
+        f"- 现在：{now_local.strftime('%Y-%m-%d %H:%M')}（星期{weekday_label}，{period}）",
+    ]
+    if recent_posts:
+        recent_text = "；".join(
+            f"「{_clip_text(str(item.get('content') or ''), 80)}」" for item in recent_posts[-config.qzone_recent_posts_limit:]
+        )
+        context_lines.append("- 最近发过的说说（避免复用相似主题、开头和句式）：" + recent_text)
+    if force_variation:
+        context_lines.append("- 上一版和最近说说太像了，这次必须换一个具体场景、时间、情绪和表达方式。")
+
     user_prompt = (
         "现在是你的私人时间，不用回复任何人。"
-        f"请以「{preset_name}」这个身份，写一条 QQ 空间说说，主题参考：{theme}。\n"
-        "要求：\n"
-        f"- 正文不超过 {config.qzone_daily_max_chars} 字\n"
-        "- 1~2 句，像真人在生活里随手发的，不要总结、不要客服腔、不要营销号腔\n"
-        "- 不暴露 AI 身份，不写聊天记录、群聊内容、他人隐私、联系方式、住址、定位\n"
-        "- 只输出说说正文，不要标题、引号、前缀或解释\n"
-        "- 如果确实没什么想发，只输出 EMPTY"
+        f"请以「{preset_name}」这个身份，写一条 QQ 空间说说。\n"
+        "这次只围绕下面这一件小事写，不要额外汇报天气、群聊、番剧或生活清单。\n"
+        f"这件小事：{focus_line}\n"
+        "可参考的背景：\n"
+        + "\n".join(context_lines)
+        + "\n要求：\n"
+        "- 只写这一件小事，1 句话最好，最多 2 句，尽量 60 字以内\n"
+        "- 像真人在生活里随手发的，具体、自然，不要总结、客服腔、营销号腔\n"
+        "- 把素材包装成你自己的经历、感受或计划，不要直接复述，"
+        "不要写成“今天天气是”“群里说”这种汇报口吻\n"
+        "- 不要报湿度、降水、体感温度等具体数值；天气素材只写体感或场景\n"
+        "- 不要额外补充其它天气、群聊、番剧、计划或多个生活片段，避免清单感\n"
+        "- 不暴露 AI 身份，不写群友昵称、群号、原话、聊天记录、链接、他人隐私、联系方式、住址、定位\n"
+        "- 不要复用最近说说里的相同开头、相同句式或相同主题\n"
+        "- 如果适合配一张表情包，给出 image_query（描述场景和情绪）；不适合就留空字符串\n"
+        "- 只输出 JSON：{\"content\":\"说说正文\",\"image_query\":\"表情检索描述或空字符串\"}\n"
+        "- 如果确实没什么想发，输出 {\"content\":\"EMPTY\",\"image_query\":\"\"}"
     )
     try:
         response = await gen_openai_chat_response(
@@ -6399,22 +6793,35 @@ async def _qzone_generate_daily_content() -> str:
             base_url=getattr(model_group, "BASE_URL", None),
             api_key=getattr(model_group, "API_KEY", None),
             proxy_url=getattr(model_group, "CHAT_PROXY", None) or None,
-            max_tokens=256,
+            temperature=0.9,
+            max_tokens=512,
             max_wait_time=60,
         )
     except Exception as exc:
         _log("warning", f"QQ空间每日任务: 生成失败: {type(exc).__name__}: {exc}")
-        return ""
+        return {}
 
-    content = _clean_qzone_generated_text(getattr(response, "response_content", "") or "")
+    content, image_query = _parse_qzone_daily_output(getattr(response, "response_content", "") or "")
     if not content:
         _log("info", f"QQ空间每日任务: {preset_name} 返回 EMPTY，今天跳过")
-        return ""
+        return {}
     if len(content) > config.qzone_daily_max_chars:
         _log("info", f"QQ空间每日任务: 生成内容过长({len(content)}字)，今天跳过")
-        return ""
-    _log("info", f"QQ空间每日任务: 生成内容({preset_name}, {len(content)}字)={content}")
-    return content
+        return {}
+    _log(
+        "info",
+        f"QQ空间每日任务: 生成内容({preset_name}, {len(content)}字)={content} "
+        f"focus={focus} theme={theme} image_query={image_query or '-'}",
+    )
+    return {
+        "content": content,
+        "image_query": image_query,
+        "focus": focus,
+        "theme": theme,
+        "weather": weather_text,
+        "group_context": group_context,
+        "bangumi": bangumi_titles,
+    }
 
 
 async def _qzone_daily_state() -> Dict[str, Any]:
@@ -6497,10 +6904,34 @@ async def _qzone_daily_tick() -> None:
         await _qzone_daily_mark(state, "skipped", "already_posted")
         return
 
-    content = await _qzone_generate_daily_content()
-    if not content:
+    recent_posts = await _qzone_recent_posts(int(config.qzone_recent_posts_limit))
+    generated = await _qzone_generate_daily_content(recent_posts)
+    if not generated:
         await _qzone_daily_mark(state, "skipped", "empty_or_generation_failed")
         return
+    content = str(generated.get("content") or "").strip()
+    if _qzone_content_too_similar(content, recent_posts):
+        _log("info", "QQ空间每日任务: 生成内容与最近说说过于相似，重写一次")
+        generated = await _qzone_generate_daily_content(recent_posts, force_variation=True)
+        if not generated:
+            await _qzone_daily_mark(state, "skipped", "empty_or_generation_failed")
+            return
+        content = str(generated.get("content") or "").strip()
+        if _qzone_content_too_similar(content, recent_posts):
+            _log("info", "QQ空间每日任务: 重写后仍与最近说说过于相似，今天跳过")
+            await _qzone_daily_mark(state, "skipped", "too_similar")
+            return
+
+    image_query = str(generated.get("image_query") or "").strip()
+    image_path = await _qzone_pick_sticker(image_query)
+    images = [image_path] if image_path else None
+    meta = {
+        "focus": str(generated.get("focus") or ""),
+        "theme": str(generated.get("theme") or ""),
+        "image_query": image_query,
+        "image": image_path,
+        "weather": str(generated.get("weather") or ""),
+    }
 
     try:
         from nekro_agent.adapters.onebot_v11.core.bot import get_bot
@@ -6522,10 +6953,21 @@ async def _qzone_daily_tick() -> None:
         result = await _publish_qzone_content(
             bot,
             content,
-            None,
+            images,
             config.qzone_default_ugc_right,
             source="daily",
+            meta=meta,
         )
+        if images and result.startswith("QQ空间发布失败"):
+            _log("warning", f"QQ空间每日任务: 带图发布失败，改纯文字重试: {result}")
+            result = await _publish_qzone_content(
+                bot,
+                content,
+                None,
+                config.qzone_default_ugc_right,
+                source="daily_text",
+                meta={**meta, "image": "", "image_fallback": True},
+            )
     except Exception as exc:
         result = f"QQ空间发布失败：{type(exc).__name__}: {exc}"
     if result.startswith("已发布"):

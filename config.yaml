@@ -164,6 +164,14 @@ qzone_daily_window_end: "23:00"
 qzone_daily_catchup_minutes: 30
 qzone_daily_max_chars: 150
 qzone_daily_themes: "最近生活,兴趣,心情,游戏,动漫,吃的"
+qzone_weather_enabled: true
+qzone_weather_city: "武汉"
+qzone_context_enabled: true
+qzone_context_max_age_minutes: 1440
+qzone_auto_sticker_enabled: true
+qzone_daily_include_bangumi: true
+qzone_recent_posts_limit: 8
+qzone_anti_repeat_threshold: 0.8
 follow_trigger_reply_style: true
 at_first_reply_plain: true
 quote_at_first_reply_quote_at: true
