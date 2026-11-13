@@ -76,7 +76,7 @@ plugin = NekroPlugin(
     module_name="humanoid_chat",
     description="让回复更像真人：可配置分段与打字节奏、情绪精力、关系记忆、作息疲劳、主动潜水与拟真瑕疵；并提供 DeepSeek 联网搜索与网页抓取。",
     author="afx",
-    version="3.9.34",
+    version="3.9.36",
     url="https://github.com/AdriftXCore/nekro-plugin-humanoid-chat",
     sleep_brief="让聊天回复更像真人，负责分段、打字节奏、情绪精力、作息、主动潜水与联网查询。",
 )
@@ -2143,6 +2143,7 @@ STORE_QZONE_SCHEDULE = "qzone_schedule"
 STORE_AI_BANS = "ai_bans"
 
 _TRIGGER_CACHE: Dict[str, Dict[str, Any]] = {}
+_LAST_DIRECT_TRIGGER_CACHE: Dict[str, Dict[str, Any]] = {}
 _BOT_NAMES_CACHE: Dict[str, Dict[str, Any]] = {}
 _LAST_UNMENTIONED_REPLY: Dict[str, float] = {}
 _FAVORABILITY_CACHE: Dict[Tuple[str, str], Tuple[float, float]] = {}
@@ -4680,7 +4681,7 @@ if NONEBOT_AVAILABLE:
                     _log("info", f"夜间直接呼叫但已配置不回复: {chat_key}")
                     return
                 direct_type = mention_type if mention_type in ("at", "quote_at", "private") else "at"
-                _TRIGGER_CACHE[chat_key] = _new_trigger_cache(
+                direct_cache = _new_trigger_cache(
                     is_direct=True,
                     proactive=False,
                     reason=f"直接呼叫({direct_type})",
@@ -4688,6 +4689,8 @@ if NONEBOT_AVAILABLE:
                     msg_id=str(msg_id) if msg_id else None,
                     mention_type=direct_type,
                 )
+                _TRIGGER_CACHE[chat_key] = direct_cache
+                _LAST_DIRECT_TRIGGER_CACHE[chat_key] = dict(direct_cache)
                 _log("info", f"直接呼叫: group={group_id}, user={user_id}, type={direct_type}")
                 return
 
@@ -4726,7 +4729,7 @@ if NONEBOT_AVAILABLE:
                 target_prob = config.reply_probability
 
             if name_called:
-                _TRIGGER_CACHE[chat_key] = _new_trigger_cache(
+                direct_cache = _new_trigger_cache(
                     is_direct=True,
                     proactive=False,
                     reason=reason,
@@ -4734,6 +4737,8 @@ if NONEBOT_AVAILABLE:
                     msg_id=str(msg_id) if msg_id else None,
                     mention_type="name",
                 )
+                _TRIGGER_CACHE[chat_key] = direct_cache
+                _LAST_DIRECT_TRIGGER_CACHE[chat_key] = dict(direct_cache)
             else:
                 last_reply = _LAST_UNMENTIONED_REPLY.get(chat_key, 0.0)
                 if _now() - last_reply < config.reply_cd_seconds:
@@ -6580,6 +6585,21 @@ async def inject_humanoid_presence(_ctx: AgentCtx) -> str:
         cfg = config
         chat_key = _ctx.from_chat_key or _ctx.chat_key
         cache = _TRIGGER_CACHE.get(chat_key, {})
+        if not cache:
+            last_direct = _LAST_DIRECT_TRIGGER_CACHE.get(chat_key)
+            current_user = str(_ctx.from_platform_userid or "").strip()
+            if (
+                last_direct
+                and _is_direct_chat(chat_key, last_direct)
+                and (not current_user or str(last_direct.get("sender_id") or "").strip() == current_user)
+            ):
+                cache = last_direct
+                _TRIGGER_CACHE[chat_key] = cache
+                _log(
+                    "info",
+                    f"触发缓存已丢失，使用最近 direct 触发兜底: {chat_key} "
+                    f"msg={cache.get('msg_id') or '-'} type={cache.get('mention_type') or '-'}",
+                )
         is_direct = _is_direct_chat(chat_key, cache)
         if not is_direct and _is_night() and cfg.night_silence_groups:
             is_direct = False
@@ -7024,12 +7044,16 @@ send_msg_text(_ck, "内容")
                 "· 用户问今天/周几有什么新番时，用 `human_bangumi_calendar(weekday)` 查每日放送。"
             )
             lines.append(
-                "· 用户问「你在看什么」「最近追什么番」「最近有什么新番」这类番剧/动漫话题时，"
-                "先调用 `human_bangumi_calendar()` 查看今天或近期的新番，再挑 1 部符合当前人设的作品，"
-                "用自己正在追或刚看过的口吻简短回答；不要列清单、不要复述播出表。"
+                "· 用户问「你在看什么」「今天看了什么番」「最近追什么番」「最近有什么新番」这类番剧/动漫话题时，"
+                "必须先调用 `human_bangumi_calendar()` 查看今天或近期的新番。"
             )
             lines.append(
-                "· 如果日历没有合适作品、查询失败或信息明显滞后，就自然说最近没特别在追，不要编造。"
+                "· 只要 `human_bangumi_calendar()` 返回了至少一部作品，就必须从中挑 1 部符合当前人设的作品，"
+                "用自己正在追、刚看过或准备补的口吻简短回答；不要列清单、不要复述播出表，"
+                "也不要回答「今天没追新番」。"
+            )
+            lines.append(
+                "· 只有日历为空、查询失败或返回内容明显不可用时，才说最近没特别在追；不要编造不存在的番。"
             )
             lines.append(
                 "· 每轮最多 1 次搜索；查不到就明确说没查到，不要连续重试或编造。"
@@ -7285,6 +7309,7 @@ async def clean_up() -> str:
 
     _remove_old_preprocessors(INSTANCE_ID)
     _TRIGGER_CACHE.clear()
+    _LAST_DIRECT_TRIGGER_CACHE.clear()
     _BOT_NAMES_CACHE.clear()
     _LAST_UNMENTIONED_REPLY.clear()
     _FAVORABILITY_CACHE.clear()
